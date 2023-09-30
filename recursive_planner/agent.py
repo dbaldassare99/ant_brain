@@ -118,12 +118,13 @@ class Brain(nn.Module):
         return obs
 
     def see(self, obs):
-        obs = torch.split(obs, 1, dim=1)
+        # obs = torch.split(obs, 1, dim=1)
         seen = [self.vision(self.preprocess(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
         return seen
 
-    def forward(self, obs, noise):
+    def forward(self, frame_1, frame_2, noise):
+        obs = [frame_1, frame_2]
         seen = self.see(obs)
         seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
@@ -165,12 +166,30 @@ class BrainOutput:
         gen_poss: {self.gen_poss.shape}
         this_turn_poss: {self.this_turn_poss.shape}
         mid: {self.midpoint.shape}
+        predicted reward: {self.predicted_reward.shape}
+        predicted moves: {self.predicted_moves.shape}
         acts: {self.acts.shape}
         """
 
+    # Get Goal:
+    # Grad on good plan, reward and short sequence
+    # Update noise and goal_vect
+    # Return goal_vect
 
-frame = torch.randn(10, 2, 224, 240, 3)
-noise = torch.randn(10, 16)
-brain = Brain()
-out = brain(frame, noise)
-print(out)
+    # Get midpoint:
+    # Grad on good plan, can act, reward, and short sequence
+    # Update noise
+    # Return midpoint
+
+    # Get action:
+    # Grad on can act, short sequence, reward, good plan x times?
+    # Update noise
+    # Return actions
+
+    def action_optim_loss(self):
+        return (
+            self.predicted_reward
+            - self.predicted_moves
+            + self.this_turn_poss
+            + self.gen_poss
+        )
