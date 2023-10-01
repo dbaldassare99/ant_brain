@@ -1,7 +1,7 @@
 # Get Goal
 # Recursive bad boy:
 from agent import Brain
-from newton import get_action
+from newton import get_action, get_midpoint
 
 net = Brain()
 
@@ -24,14 +24,14 @@ def algo(obs, goal):
         # Take action note
         # Return check plan
 
-
-# Get_action
-# Do actions
-# Check action
-# Take action note
-# Return check plan
-# Else
-# Get Midpoint
-# Take plan note of Call with (obs, midpoint)
-# If this one fails, still try the next one…
-# Take plan note and Return Call with (current state, goal)
+    # Get_action
+    # Do actions
+    # Check action
+    # Take action note
+    # Return check plan
+    # Else
+    # Get Midpoint
+    midpoint = get_midpoint(net, obs, goal)
+    # Take plan note of Call with (obs, midpoint)
+    # If this one fails, still try the next one…
+    # Take plan note and Return Call with (current state, goal)

@@ -97,49 +97,6 @@ class Action(nn.Module):
         return acts
 
 
-class Brain(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.vision = Vision()
-        self.trunk = Trunk()
-        self.generally_possibe = Vect2Scalar()
-        self.possibe_this_turn = Vect2Scalar()
-        self.predicted_moves = Vect2Scalar()
-        self.pre_reward = Vect2Scalar()
-        self.midpoint = Vects2_16()
-        self.acts = Action()
-
-    def preprocess(self, obs):
-        if not isinstance(obs, torch.Tensor):
-            obs = torch.tensor(obs, dtype=torch.float)
-        obs = obs.squeeze()
-        batch = obs.shape[0]
-        obs = obs.view(batch, 3, 224, 240)
-        return obs
-
-    def see(self, obs):
-        # obs = torch.split(obs, 1, dim=1)
-        seen = [self.vision(self.preprocess(ob)) for ob in obs]
-        seen = torch.stack(seen, dim=1)
-        return seen
-
-    def forward(self, frame_1, frame_2, noise):
-        obs = [frame_1, frame_2]
-        seen = self.see(obs)
-        seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
-        vects = self.trunk(seen)
-        output = BrainOutput(
-            vects,
-            self.generally_possibe(vects),
-            this_turn_poss=self.possibe_this_turn(vects),
-            midpoint=self.midpoint(vects),
-            acts=self.acts(vects),
-            predicted_reward=self.pre_reward(vects),
-            predicted_moves=self.predicted_moves(vects),
-        )
-        return output
-
-
 class BrainOutput:
     def __init__(
         self,
@@ -171,6 +128,16 @@ class BrainOutput:
         acts: {self.acts.shape}
         """
 
+    def squeeze_0(self):
+        self.vects = self.vects.squeeze(0)
+        self.gen_poss = self.gen_poss.squeeze(0)
+        self.this_turn_poss = self.this_turn_poss.squeeze(0)
+        self.midpoint = self.midpoint.squeeze(0)
+        self.predicted_reward = self.predicted_reward.squeeze(0)
+        self.predicted_moves = self.predicted_moves.squeeze(0)
+        self.acts = self.acts.squeeze(0)
+        return self
+
     # Get Goal:
     # Grad on good plan, reward and short sequence
     # Update noise and goal_vect
@@ -180,6 +147,13 @@ class BrainOutput:
     # Grad on good plan, can act, reward, and short sequence
     # Update noise
     # Return midpoint
+    def midpoint_optim_loss(self):
+        return (
+            self.predicted_reward
+            - self.predicted_moves
+            + self.this_turn_poss
+            + self.gen_poss
+        )
 
     # Get action:
     # Grad on can act, short sequence, reward, good plan x times?
@@ -193,3 +167,49 @@ class BrainOutput:
             + self.this_turn_poss
             + self.gen_poss
         )
+
+
+class Brain(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.vision = Vision()
+        self.trunk = Trunk()
+        self.generally_possibe = Vect2Scalar()
+        self.possibe_this_turn = Vect2Scalar()
+        self.predicted_moves = Vect2Scalar()
+        self.pre_reward = Vect2Scalar()
+        self.midpoint = Vects2_16()
+        self.acts = Action()
+
+    def preprocess_frame(self, ob):
+        assert isinstance(ob, torch.Tensor)
+        batch = ob.shape[0]
+        ob = ob.view(batch, 3, 224, 240)
+        return ob
+
+    def forward(
+        self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
+    ) -> BrainOutput:
+        obs = [frame_1, frame_2]
+        seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
+        seen = torch.stack(seen, dim=1)
+        seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
+        vects = self.trunk(seen)
+        output = BrainOutput(
+            vects,
+            self.generally_possibe(vects),
+            this_turn_poss=self.possibe_this_turn(vects),
+            midpoint=self.midpoint(vects),
+            acts=self.acts(vects),
+            predicted_reward=self.pre_reward(vects),
+            predicted_moves=self.predicted_moves(vects),
+        )
+        return output
+
+    def unbatched_forward(
+        self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
+    ):
+        ins = [x.unsqueeze(0) for x in [frame_1, frame_2, noise]]
+        outs = self.forward(*ins)
+        outs = outs.squeeze_0()
+        return outs
