@@ -1,4 +1,5 @@
 from agent import Brain
+from buffer import StateAction
 import torch
 
 # self.vects = vects
@@ -53,3 +54,9 @@ def test_brain_10_batch():
     assert out.predicted_reward.shape == torch.Size([10, 1])
     assert out.predicted_moves.shape == torch.Size([10, 1])
     assert out.acts.shape == torch.Size([10, 10, 33])
+
+
+def test_get_actions():
+    brain_out = StateAction(None, None, None, None, None, None, None, None, None)
+    brain_out.acts = torch.rand(5, 10, 33)
+    brain_out.get_action_sequence()

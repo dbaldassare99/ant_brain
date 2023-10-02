@@ -1,37 +1,46 @@
 # Get Goal
 # Recursive bad boy:
 from agent import Brain
-from newton import get_action, get_midpoint
+from newton import optimize_subplan
+import torch
+from buffer import ExperienceBuffer, StateAction
 
-net = Brain()
 
+class RP:
+    def __init__(self, env) -> None:
+        self.env = env
+        self.net = Brain()
+        self.notes = ExperienceBuffer()
 
-def algo(obs, goal):
-    # Put obs, goal into net
-    ret = net(obs, goal)
+    def recursive_actor(
+        self, obs: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
+    ):
+        # Put obs, goal into net
+        optimized_noise = optimize_subplan(self.net, obs, goal, noise)
+        ret = self.net(obs, goal, optimized_noise)
 
-    # if obs → general goal < 0.5 # safeguard
-    if ret.gen_poss < 0.5:
-        # Return failure
-        return "failure"
+        # if obs → general goal < 0.5 # safeguard
+        if ret.gen_poss < 0.5:
+            # Return failure
+            return "failure"
+        # If can act >=90%
+        if ret.this_turn_poss >= 0.9:
+            # Get action
+            action_sequence = ret.get_action_sequence()
+            # Do actions
+            for action in action_sequence[0]:  # not parallel
+                self.env.step(action)
+            # Check action
+            optimized_noise = optimize_subplan(self.net, obs, goal, noise)
+            ret = self.net(obs, goal, optimized_noise)
+            good_action = 1 if ret.predicted_moves < 3 else 0
+            good_plan = 1 if good_action == 1 else None
+            self.notes.add(StateAction(obs, goal, ret, good_plan, good_action))
+            # Take action note
+            # Return check plan
 
-    # If can act >=90%
-    if ret.this_turn_poss >= 0.9:
-        # Get action
-        act = get_action(net, obs, goal)
-        # Do actions
-        # Check action
-        # Take action note
-        # Return check plan
-
-    # Get_action
-    # Do actions
-    # Check action
-    # Take action note
-    # Return check plan
-    # Else
-    # Get Midpoint
-    midpoint = get_midpoint(net, obs, goal)
-    # Take plan note of Call with (obs, midpoint)
-    # If this one fails, still try the next one…
-    # Take plan note and Return Call with (current state, goal)
+            # Else
+            # Get Midpoint
+            # Take plan note of Call with (obs, midpoint)
+            # If this one fails, still try the next one…
+            # Take plan note and Return Call with (current state, goal)

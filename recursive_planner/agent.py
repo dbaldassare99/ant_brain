@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
+from buffer import StateAction
 
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
@@ -72,7 +73,7 @@ class Vects2_16(nn.Module):
             nn.Linear(24, 16),
         )
 
-    def forward(self, vects):
+    def forward(self, vects) -> torch.Tensor:
         batch = vects.shape[0]
         concatted = vects.view(batch, 48)
         return self.model(concatted)
@@ -86,87 +87,14 @@ class Action(nn.Module):
         self.encoder_c = Vects2_16()
         self.action_decoder = nn.Linear(16, 33)
 
-    def forward(self, vects):
+    def forward(self, vects: torch.Tensor):
         batch = vects.shape[0]
-        # concatted = vects.view(batch, 48)
         h = self.encoder_h(vects).unsqueeze(0)
         c = self.encoder_c(vects).unsqueeze(0)
         inputs = torch.ones(batch, 10, 1)
         acts, (h, c) = self.unfold(inputs, (h, c))
         acts = self.action_decoder(acts)
         return acts
-
-
-class BrainOutput:
-    def __init__(
-        self,
-        vects,
-        gen_poss,
-        this_turn_poss,
-        midpoint,
-        acts,
-        predicted_reward,
-        predicted_moves,
-    ):
-        self.vects = vects
-        self.gen_poss = gen_poss
-        self.this_turn_poss = this_turn_poss
-        self.midpoint = midpoint
-        self.predicted_reward = predicted_reward
-        self.predicted_moves = predicted_moves
-        self.acts = acts
-
-    def __str__(self):
-        return f"""
-        BrainOutput
-        vects: {self.vects.shape}
-        gen_poss: {self.gen_poss.shape}
-        this_turn_poss: {self.this_turn_poss.shape}
-        mid: {self.midpoint.shape}
-        predicted reward: {self.predicted_reward.shape}
-        predicted moves: {self.predicted_moves.shape}
-        acts: {self.acts.shape}
-        """
-
-    def squeeze_0(self):
-        self.vects = self.vects.squeeze(0)
-        self.gen_poss = self.gen_poss.squeeze(0)
-        self.this_turn_poss = self.this_turn_poss.squeeze(0)
-        self.midpoint = self.midpoint.squeeze(0)
-        self.predicted_reward = self.predicted_reward.squeeze(0)
-        self.predicted_moves = self.predicted_moves.squeeze(0)
-        self.acts = self.acts.squeeze(0)
-        return self
-
-    # Get Goal:
-    # Grad on good plan, reward and short sequence
-    # Update noise and goal_vect
-    # Return goal_vect
-
-    # Get midpoint:
-    # Grad on good plan, can act, reward, and short sequence
-    # Update noise
-    # Return midpoint
-    def midpoint_optim_loss(self):
-        return (
-            self.predicted_reward
-            - self.predicted_moves
-            + self.this_turn_poss
-            + self.gen_poss
-        )
-
-    # Get action:
-    # Grad on can act, short sequence, reward, good plan x times?
-    # Update noise
-    # Return actions
-
-    def action_optim_loss(self):
-        return (
-            self.predicted_reward
-            - self.predicted_moves
-            + self.this_turn_poss
-            + self.gen_poss
-        )
 
 
 class Brain(nn.Module):
@@ -189,13 +117,15 @@ class Brain(nn.Module):
 
     def forward(
         self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
-    ) -> BrainOutput:
+    ) -> StateAction:
         obs = [frame_1, frame_2]
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
-        output = BrainOutput(
+        output = StateAction(
+            frame_1,
+            frame_2,
             vects,
             self.generally_possibe(vects),
             this_turn_poss=self.possibe_this_turn(vects),
@@ -208,7 +138,7 @@ class Brain(nn.Module):
 
     def unbatched_forward(
         self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
-    ):
+    ) -> StateAction:
         ins = [x.unsqueeze(0) for x in [frame_1, frame_2, noise]]
         outs = self.forward(*ins)
         outs = outs.squeeze_0()
