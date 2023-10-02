@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
-from buffer import StateAction
+from buffer import State
 
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
@@ -104,7 +104,7 @@ class Brain(nn.Module):
         self.trunk = Trunk()
         self.generally_possibe = Vect2Scalar()
         self.possibe_this_turn = Vect2Scalar()
-        self.predicted_moves = Vect2Scalar()
+        self.num_moves = Vect2Scalar()
         self.pre_reward = Vect2Scalar()
         self.midpoint = Vects2_16()
         self.acts = Action()
@@ -117,29 +117,16 @@ class Brain(nn.Module):
 
     def forward(
         self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
-    ) -> StateAction:
+    ) -> State:
         obs = [frame_1, frame_2]
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
-        output = StateAction(
-            frame_1,
-            frame_2,
-            vects,
+        return (
             self.generally_possibe(vects),
-            this_turn_poss=self.possibe_this_turn(vects),
-            midpoint=self.midpoint(vects),
-            acts=self.acts(vects),
-            predicted_reward=self.pre_reward(vects),
-            predicted_moves=self.predicted_moves(vects),
+            self.possibe_this_turn(vects),
+            self.midpoint(vects),
+            self.acts(vects),
+            self.num_moves(vects),
         )
-        return output
-
-    def unbatched_forward(
-        self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
-    ) -> StateAction:
-        ins = [x.unsqueeze(0) for x in [frame_1, frame_2, noise]]
-        outs = self.forward(*ins)
-        outs = outs.squeeze_0()
-        return outs

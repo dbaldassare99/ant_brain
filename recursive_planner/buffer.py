@@ -1,7 +1,28 @@
 import torch
+from agent import Brain
+from torch.func import jacrev, vmap
 
 
-class StateAction:
+class StateQueue:
+    def __init__(self):
+        self.obs_list = []
+        self.reward_total = 0
+        self.terminated = False
+
+    def __call__(self, env_step):
+        obs, reward, terminated, truncated, info = env_step
+        self.obs_list.append(obs)
+        self.reward_total += reward
+        self.terminated = terminated
+
+    def midpoint(self):
+        return self.obs_list[len(self.obs_list) // 2]
+
+    def final_obs(self):
+        return self.obs_list[-1]
+
+
+class State:
     def __init__(
         self,
         obs: torch.Tensor,
@@ -12,7 +33,8 @@ class StateAction:
         midpoint: torch.Tensor,
         acts: torch.Tensor,
         predicted_reward: torch.Tensor,
-        predicted_moves: torch.Tensor,
+        num_moves: torch.Tensor,
+        noise: torch.Tensor,
     ):
         self.obs = obs
         self.goal = goal
@@ -21,30 +43,9 @@ class StateAction:
         self.this_turn_poss = this_turn_poss
         self.midpoint = midpoint
         self.predicted_reward = predicted_reward
-        self.predicted_moves = predicted_moves
         self.acts = acts
-
-    def __str__(self):
-        return f"""
-        BrainOutput
-        vects: {self.vects.shape}
-        gen_poss: {self.gen_poss.shape}
-        this_turn_poss: {self.this_turn_poss.shape}
-        mid: {self.midpoint.shape}
-        predicted reward: {self.predicted_reward.shape}
-        predicted moves: {self.predicted_moves.shape}
-        acts: {self.acts.shape}
-        """
-
-    def squeeze_0(self):
-        self.vects = self.vects.squeeze(0)
-        self.gen_poss = self.gen_poss.squeeze(0)
-        self.this_turn_poss = self.this_turn_poss.squeeze(0)
-        self.midpoint = self.midpoint.squeeze(0)
-        self.predicted_reward = self.predicted_reward.squeeze(0)
-        self.predicted_moves = self.predicted_moves.squeeze(0)
-        self.acts = self.acts.squeeze(0)
-        return self
+        self.num_moves = num_moves
+        self.noise = noise
 
     def get_action_sequence(self) -> list:
         assert len(self.acts.shape) == 3  # batched
@@ -61,29 +62,111 @@ class StateAction:
             action_list[batch] = action_list[batch][:idx]
         return action_list
 
-    # Get Goal:
-    # Grad on good plan, reward and short sequence
-    # Update noise and goal_vect
-    # Return goal_vect
     def goal_optim_loss(self):
-        return self.predicted_reward - self.predicted_moves + self.gen_poss
+        return self.predicted_reward - self.num_moves + self.gen_poss
 
-    # Get subplan:
-    # Grad on good plan, can act, reward, and short sequence
-    # Update noise
-    # Return midpoint
     def subplan_optim_loss(self):
         return (
-            self.predicted_reward
-            - self.predicted_moves
-            + self.this_turn_poss
-            + self.gen_poss
+            self.predicted_reward - self.num_moves + self.this_turn_poss + self.gen_poss
         )
+
+    # works batched
+    def optimize_subplan(
+        self,
+        net: Brain,
+        steps: int = 100,
+    ):
+        net = net.eval()
+        jacobian = vmap(
+            jacrev(
+                lambda x, y, z: net.arg_fwd_unbatched(x, y, z).subplan_optim_loss(), 2
+            )
+        )
+        for _ in range(steps):
+            grad = jacobian(net, self.goal, self.noise)
+            grad = grad.squeeze(1)
+            self.noise = self.noise + grad
+
+    # no batch!
+    def optimize_goal(
+        self,
+        net: Brain,
+    ):
+        net = net.eval()
+        jacobian = jacrev(
+            lambda x, y, z: self.arg_fwd_unbatched(x, y, z).goal_optim_loss(), (1, 2)
+        )
+        while self.gen_poss < 0.8:
+            grads = jacobian(net, self.goal, self.noise)
+            grads = [g.squeeze(1) for g in grads]
+            self.goal = self.goal + grads[1]
+            self.noise = self.noise + grads[2]
+            self.forward(net)
+
+    def arg_fwd_unbatched(self, net, goal, noise):
+        ins = [self.obs, goal, noise]
+        ins = [x.unsqueeze(0) for x in ins]
+        outs = net(ins)
+        outs = [x.squeeze(0) for x in outs]
+        (
+            self.gen_poss,
+            self.this_turn_poss,
+            self.midpoint,
+            self.acts,
+            self.num_moves,
+        ) = outs
+        return self
+
+    def forward(self, net: Brain):
+        ins = [self.obs, self.goal, self.noise]
+        if len(self.obs.shape) == 3:  # batch unbatched
+            ins = [x.unsqueeze(0) for x in ins]
+            post = lambda xs: [x.squeeze(0) for x in xs]  # re-unbatch
+        else:
+            post = lambda xs: xs
+        (
+            self.gen_poss,
+            self.this_turn_poss,
+            self.midpoint,
+            self.acts,
+            self.num_moves,
+        ) = post(net(ins))
+
+
+class Memory:
+    def __init__(
+        self,
+        state: State,
+    ):
+        self.obs = state.obs
+        self.goal = state.goal
+        self.vects = state.vects
+        self.gen_poss = state.gen_poss
+        self.this_turn_poss = state.this_turn_poss
+        self.midpoint = state.midpoint
+        self.predicted_reward = state.predicted_reward
+        self.acts = state.acts
+        self.num_moves = state.num_moves
+        self.noise = state.noise
+
+
+class ActionMemory(Memory):
+    def __init__(self, state: State, queue: StateQueue, action_sequence) -> None:
+        super().__init__(state)
+        self.can_act = 1 if state.num_moves < 3 else 0
+        self.good_plan = 1 if self.can_act == 1 else None
+        self.midpoint = queue.midpoint()
+        self.num_moves = len(action_sequence)
+
+
+class PlanMemory(Memory):
+    def __init__(self, state: State) -> None:
+        super().__init__(state)
 
 
 class ExperienceBuffer:
     def __init__(self) -> None:
         self.buffer = []
 
-    def add(self, example: StateAction):
+    def add(self, example: State):
         self.buffer.append(example)

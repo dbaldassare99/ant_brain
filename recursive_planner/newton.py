@@ -18,15 +18,35 @@ def optimize_subplan(
     steps: int = 100,
 ):
     net = net.eval()
-    midpoint_jacobian = vmap(
+    jacobian = vmap(
         jacrev(lambda x, y, z: net.unbatched_forward(x, y, z).subplan_optim_loss(), 2)
     )
     for _ in range(steps):
-        grad = midpoint_jacobian(obs, goal, noise)
+        grad = jacobian(obs, goal, noise)
         grad = grad.squeeze(1)
-        grad = grad * -1  # go up
-        noise = noise - grad
+        noise = noise + grad
     return noise
+
+
+# no batch!
+def optimize_goal(
+    net: Brain,
+    obs: torch.Tensor,
+    goal: torch.Tensor,
+    noise: torch.Tensor,
+):
+    net = net.eval()
+    jacobian = jacrev(
+        lambda x, y, z: net.unbatched_forward(x, y, z).goal_optim_loss(), (1, 2)
+    )
+    ret = net.unbatched_forward(obs, goal, noise)
+    while ret.gen_poss < 0.8:
+        grads = jacobian(obs, goal, noise)
+        grads = [g.squeeze(1) for g in grads]
+        goal = goal + grads[1]
+        noise = noise + grads[2]
+        ret = net.unbatched_forward(obs, goal, noise)
+    return goal, noise
 
 
 frame_1 = torch.randn(10, 224, 240, 3)
