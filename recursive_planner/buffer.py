@@ -26,26 +26,27 @@ class State:
     def __init__(
         self,
         obs: torch.Tensor = None,
-        goal: torch.Tensor = None,
+        goal: torch.Tensor = torch.randn(224, 240, 3),  # honestly, too jank 4 me
+        noise: torch.Tensor = torch.randn(16),  # yep that's jank
         vects: torch.Tensor = None,
-        gen_poss: torch.Tensor = None,
-        this_turn_poss: torch.Tensor = None,
         midpoint: torch.Tensor = None,
         acts: torch.Tensor = None,
-        predicted_reward: torch.Tensor = None,
-        num_moves: torch.Tensor = None,
-        noise: torch.Tensor = None,
+        gen_poss: torch.Tensor = 0,
+        this_turn_poss: torch.Tensor = 0,
+        predicted_reward: torch.Tensor = 0,
+        num_moves: torch.Tensor = 0,
     ):
         self.obs = obs
         self.goal = goal
         self.vects = vects
-        self.gen_poss = gen_poss
-        self.this_turn_poss = this_turn_poss
+        self.generally_possible = gen_poss
+        self.possible_this_turn = this_turn_poss
         self.midpoint = midpoint
         self.predicted_reward = predicted_reward
         self.acts = acts
         self.num_moves = num_moves
         self.noise = noise
+        self.lr = 5
 
     def get_action_sequence(self) -> list:
         assert len(self.acts.shape) == 3  # batched
@@ -62,75 +63,77 @@ class State:
             action_list[batch] = action_list[batch][:idx]
         return action_list
 
-    def goal_optim_loss(self):
-        return self.predicted_reward - self.num_moves + self.gen_poss
+    # def goal_optim_loss(self):
+    #     return self.predicted_reward - self.num_moves + self.gen_poss
 
-    def subplan_optim_loss(self):
-        return (
-            self.predicted_reward - self.num_moves + self.this_turn_poss + self.gen_poss
-        )
+    # def subplan_optim_loss(self):
+    #     return (
+    #         self.predicted_reward - self.num_moves + self.this_turn_poss + self.gen_poss
+    #     )
 
-    # works batched
+    # no_batch
     def optimize_subplan(
         self,
         net: Brain,
-        steps: int = 100,
+        steps: int = 50,
     ):
+        def subplan_optim_loss(xs):
+            return xs[5] - xs[4] + xs[1] + xs[0]
+
         net = net.eval()
-        jacobian = vmap(
-            jacrev(
-                lambda x, y, z: self.arg_fwd_unbatched(x, y, z).subplan_optim_loss(), 2
-            )
-        )
+        jacobian = jacrev(lambda x, y, z: subplan_optim_loss(net(x, y, z)), 2)
+        before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         for _ in range(steps):
-            grad = jacobian(net, self.goal, self.noise)
-            grad = grad.squeeze(1)
-            self.noise = self.noise + grad
+            grad = jacobian(self.obs, self.goal, self.noise)
+            grad = grad.squeeze(0)
+            self.noise = self.noise + grad * self.lr
+        after = subplan_optim_loss(net(self.obs, self.goal, self.noise))
+        self.update(net)
+        return before, after
 
     # no batch!
-    def optimize_goal(
+    def optimize_plan(
         self,
         net: Brain,
+        steps: int = 200,
     ):
+        def plan_optim_loss(xs):
+            return xs[5] - xs[4] + xs[0]
+
         net = net.eval()
-        jacobian = jacrev(
-            lambda x, y, z: self.arg_fwd_unbatched(x, y, z).goal_optim_loss(), (1, 2)
-        )
-        while self.gen_poss < 0.9:
-            grads = jacobian(net, self.goal, self.noise)
-            grads = [g.squeeze(1) for g in grads]
-            self.goal = self.goal + grads[1]
-            self.noise = self.noise + grads[2]
-            self.forward(net)
+        jacobian = jacrev(lambda x, y, z: plan_optim_loss(net(x, y, z)), (1, 2))
+        count = 0
+        before = plan_optim_loss(net(self.obs, self.goal, self.noise))
+        while self.generally_possible < 0.9 and count < steps:
+            count += 1
+            grads = jacobian(self.obs, self.goal, self.noise)
+            grads = [g.squeeze(0) for g in grads]
+            self.goal = self.goal + grads[0] * self.lr
+            self.noise = self.noise + grads[1] * self.lr
+            self.update(net)
+        after = plan_optim_loss(net(self.obs, self.goal, self.noise))
+        return before, after
 
-    def arg_fwd_unbatched(self, net, goal, noise):
-        ins = [self.obs, goal, noise]
-        ins = [x.unsqueeze(0) for x in ins]
-        outs = net(ins)
-        outs = [x.squeeze(0) for x in outs]
+    def update(
+        self,
+        net: Brain,
+        obs: torch.Tensor = None,
+        goal: torch.Tensor = None,
+        noise: torch.Tensor = None,
+    ) -> None:
+        net.eval()
+        self.obs = obs if obs else self.obs
+        self.goal = goal if goal else self.goal
+        self.noise = noise if noise else self.noise
+
         (
-            self.gen_poss,
-            self.this_turn_poss,
+            self.generally_possible,
+            self.possible_this_turn,
             self.midpoint,
             self.acts,
             self.num_moves,
-        ) = outs
-        return self
-
-    def forward(self, net: Brain):
-        ins = [self.obs, self.goal, self.noise]
-        if len(self.obs.shape) == 3:  # batch unbatched
-            ins = [x.unsqueeze(0) for x in ins]
-            post = lambda xs: [x.squeeze(0) for x in xs]  # re-unbatch
-        else:
-            post = lambda xs: xs
-        (
-            self.gen_poss,
-            self.this_turn_poss,
-            self.midpoint,
-            self.acts,
-            self.num_moves,
-        ) = post(net(ins))
+            self.predicted_reward,
+        ) = net(self.obs, self.goal, self.noise)
 
 
 class Memory:
@@ -141,8 +144,8 @@ class Memory:
         self.obs = state.obs
         self.goal = state.goal
         self.vects = state.vects
-        self.gen_poss = state.gen_poss
-        self.this_turn_poss = state.this_turn_poss
+        self.gen_poss = state.generally_possible
+        self.this_turn_poss = state.possible_this_turn
         self.midpoint = state.midpoint
         self.reward = state.predicted_reward
         self.acts = state.acts

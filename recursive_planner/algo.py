@@ -14,12 +14,9 @@ class RP:
 
     def play(self):
         obs, info = self.env.reset()
-        state = State(
-            obs=obs,
-            gen_poss=0.0,
-        )
+        state = State(obs=obs)
         while True:
-            state.optimize_goal(self.net)
+            state.optimize_plan(self.net)
             memory = self.recursive_actor(state)
             state.obs = memory.last_obs
 
@@ -29,7 +26,7 @@ class RP:
     ) -> Memory:
         arg_state = copy.copy(state)  # to see how close we got!
         state.optimize_subplan(self.net)
-        if state.this_turn_poss >= 0.95:
+        if state.possible_this_turn >= 0.95:
             action_sequence = state.get_action_sequence()
             queue = StateQueue()
             for action in action_sequence[0]:  # not parallel

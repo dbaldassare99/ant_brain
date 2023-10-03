@@ -111,7 +111,6 @@ class Brain(nn.Module):
         self.acts = Action()
 
     def preprocess_frame(self, ob):
-        assert isinstance(ob, torch.Tensor)
         batch = ob.shape[0]
         ob = ob.view(batch, 3, 224, 240)
         return ob
@@ -119,12 +118,19 @@ class Brain(nn.Module):
     def forward(
         self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
     ):
+        frame_1 = torch.Tensor(frame_1).float()
+        batched = True
+        if len(frame_1.shape) == 3:
+            frame_1 = frame_1.unsqueeze(0)
+            frame_2 = frame_2.unsqueeze(0)
+            noise = noise.unsqueeze(0)
+            batched = False
         obs = [frame_1, frame_2]
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
-        return (
+        rets = (
             self.generally_possibe(vects),
             self.possibe_this_turn(vects),
             self.midpoint(vects),
@@ -132,3 +138,6 @@ class Brain(nn.Module):
             self.num_moves(vects),
             self.predicted_reward(vects),
         )
+        if not batched:
+            rets = [r.squeeze(0) for r in rets]
+        return rets
