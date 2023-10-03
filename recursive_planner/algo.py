@@ -3,7 +3,8 @@
 from agent import Brain
 from newton import optimize_subplan, optimize_goal
 import torch
-from buffer import ExperienceBuffer, State, StateQueue, ActionMemory, PlanMemory
+from buffer import ExperienceBuffer, State, StateQueue, ActionMemory, PlanMemory, Memory
+import copy
 
 
 class RP:
@@ -24,36 +25,45 @@ class RP:
     def recursive_actor(
         self,
         state: State,
-    ):
+    ) -> Memory:
+        arg_state = copy.copy(state)  # to see how close we got!
+        state.optimize_subplan(self.net)
         if state.this_turn_poss >= 0.95:
             action_sequence = state.get_action_sequence()
             queue = StateQueue()
             for action in action_sequence[0]:  # not parallel
                 queue(self.env.step(action))
+            # get info abt the action
             state.optimize_subplan(self.net)
-            self.notes.add(ActionMemory(state, queue, action_sequence))
-            return (
-                len(action_sequence),
-                queue.final_obs(),
-                queue.reward_total,
-            )
+            action_record = ActionMemory(state, queue, action_sequence)
+            self.notes.add(action_record)
+            return action_record
         else:
-            state.optimize_subplan(self.net)
-            state_1 = self.do_plan(state)
-            state_2 = self.do_plan(state)
-            # check
-            rew_so_far = rew_1 + rew_2
-            sub_noise = optimize_subplan(self.net, obs, goal, noise)
-            ret = self.net(obs, goal, sub_noise)
-            if ret.num_moves < 3 or expected_reward - rew_so_far <= 3:
-                return "success?"
-            else:
+            # first half
+            state_part_1 = copy.copy(state)
+            state_part_1.goal = state.midpoint
+            memory_part_1 = self.recursive_actor(state_part_1)
+            # second half
+            state_part_2 = copy.copy(state)
+            state_part_2.obs = memory_part_1.last_obs
+            memory_part_2 = self.recursive_actor(state_part_2)
+            # third half (lol) (really 2nd half again)
+            state_part_3 = copy.copy(state)
+            state_part_3.obs = memory_part_2.last_obs
+            memory_part_3 = self.recursive_actor(state_part_3)
 
-            num_actions = num_actions_1 + num_actions_2
-            rew = rew_1 + rew_2
-            return num_actions, obs, rew
-
-    def do_plan(self, state):
-        self.recursive_actor(state)
-        self.notes.add(PlanMemory)
-        return state
+            # get info abt the plan
+            check_state = copy.copy(state)
+            check_state.obs = memory_part_3.last_obs
+            check_state.optimize_subplan(self.net)
+            plan_record = PlanMemory(
+                state, [memory_part_1, memory_part_2, memory_part_3]
+            )
+            plan_record.gen_poss = (
+                1
+                if check_state.num_moves < 3
+                or arg_state.predicted_reward - plan_record.prediced_reward <= 3
+                else 0
+            )
+            self.notes.add(plan_record)
+            return plan_record

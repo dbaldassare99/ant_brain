@@ -144,24 +144,38 @@ class Memory:
         self.gen_poss = state.gen_poss
         self.this_turn_poss = state.this_turn_poss
         self.midpoint = state.midpoint
-        self.predicted_reward = state.predicted_reward
+        self.reward = state.predicted_reward
         self.acts = state.acts
         self.num_moves = state.num_moves
         self.noise = state.noise
 
 
 class ActionMemory(Memory):
-    def __init__(self, state: State, queue: StateQueue, action_sequence) -> None:
+    def __init__(
+        self, state: State, queue: StateQueue, action_sequence: list[torch.Tensor]
+    ) -> None:
         super().__init__(state)
         self.can_act = 1 if state.num_moves < 3 else 0
         self.good_plan = 1 if self.can_act == 1 else None
         self.midpoint = queue.midpoint()
         self.num_moves = len(action_sequence)
+        self.last_obs = queue.final_obs()
 
 
 class PlanMemory(Memory):
-    def __init__(self, state: State) -> None:
+    def __init__(self, state: State, memories: list[ActionMemory]) -> None:
         super().__init__(state)
+        self.num_moves = sum([m.num_moves for m in memories])
+        self.predicted_reward = sum([m.reward for m in memories])
+        self.obs = memories[0].obs
+        self.goal = memories[-1].goal
+        # we could say no... because we're alrealy < 95% this turn poss to get here
+        self.this_turn_poss = None
+
+    def add(self, memory: Memory) -> None:
+        self.num_moves += memory.num_moves
+        self.predicted_reward += memory.reward
+        self.goal = memory.goal
 
 
 class ExperienceBuffer:
