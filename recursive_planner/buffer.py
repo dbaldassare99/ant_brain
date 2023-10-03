@@ -25,16 +25,16 @@ class StateQueue:
 class State:
     def __init__(
         self,
-        obs: torch.Tensor,
-        goal: torch.Tensor,
-        vects: torch.Tensor,
-        gen_poss: torch.Tensor,
-        this_turn_poss: torch.Tensor,
-        midpoint: torch.Tensor,
-        acts: torch.Tensor,
-        predicted_reward: torch.Tensor,
-        num_moves: torch.Tensor,
-        noise: torch.Tensor,
+        obs: torch.Tensor = None,
+        goal: torch.Tensor = None,
+        vects: torch.Tensor = None,
+        gen_poss: torch.Tensor = None,
+        this_turn_poss: torch.Tensor = None,
+        midpoint: torch.Tensor = None,
+        acts: torch.Tensor = None,
+        predicted_reward: torch.Tensor = None,
+        num_moves: torch.Tensor = None,
+        noise: torch.Tensor = None,
     ):
         self.obs = obs
         self.goal = goal
@@ -79,7 +79,7 @@ class State:
         net = net.eval()
         jacobian = vmap(
             jacrev(
-                lambda x, y, z: net.arg_fwd_unbatched(x, y, z).subplan_optim_loss(), 2
+                lambda x, y, z: self.arg_fwd_unbatched(x, y, z).subplan_optim_loss(), 2
             )
         )
         for _ in range(steps):
@@ -96,7 +96,7 @@ class State:
         jacobian = jacrev(
             lambda x, y, z: self.arg_fwd_unbatched(x, y, z).goal_optim_loss(), (1, 2)
         )
-        while self.gen_poss < 0.8:
+        while self.gen_poss < 0.9:
             grads = jacobian(net, self.goal, self.noise)
             grads = [g.squeeze(1) for g in grads]
             self.goal = self.goal + grads[1]

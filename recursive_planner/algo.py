@@ -1,7 +1,6 @@
 # Get Goal
 # Recursive bad boy:
 from agent import Brain
-from newton import optimize_subplan, optimize_goal
 import torch
 from buffer import ExperienceBuffer, State, StateQueue, ActionMemory, PlanMemory, Memory
 import copy
@@ -14,13 +13,15 @@ class RP:
         self.notes = ExperienceBuffer()
 
     def play(self):
-        obs, reward, terminated, truncated, info = self.env.reset()
+        obs, info = self.env.reset()
+        state = State(
+            obs=obs,
+            gen_poss=0.0,
+        )
         while True:
-            goal, noise = self.make_goal(obs)
-            self.recursive_actor(obs, goal, noise)
-
-    def make_goal(self, obs):
-        goal, noise = optimize_goal(self.net, obs, torch.randn(16))
+            state.optimize_goal(self.net)
+            memory = self.recursive_actor(state)
+            state.obs = memory.last_obs
 
     def recursive_actor(
         self,
