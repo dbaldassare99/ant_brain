@@ -3,6 +3,7 @@ from nets import Brain
 from torch.func import jacrev, vmap
 import numpy as np
 from dataclasses import dataclass
+from tqdm import trange
 
 # class Buffer:
 #     def __init__(self) -> None:
@@ -10,6 +11,22 @@ from dataclasses import dataclass
 
 #     def add(self, example):
 #         self.buffer.append(example)
+
+
+class SMA:
+    def __init__(self, length: int):
+        self.length = length
+        self.buffer = []
+        self.total = 0
+
+    def add(self, x: float):
+        self.buffer.append(x)
+        self.total += x
+        if len(self.buffer) > self.length:
+            self.total -= self.buffer.pop(0)
+
+    def mean(self):
+        return self.total / len(self.buffer)
 
 
 @dataclass
@@ -71,7 +88,7 @@ class State:
         if len(self.acts.shape) < 3:  # if unbatched
             acts = self.acts.unsqueeze(0)
         acts = torch.argmax(acts, dim=-1)
-        indices = torch.where(acts == 32, acts, 0.0)
+        indices = torch.where(acts == 35, acts, 0.0)
         indices = indices.nonzero()
         action_list = [*torch.split(acts, 1)]
         action_list = [a.squeeze() for a in action_list]
@@ -87,15 +104,16 @@ class State:
     def optimize_subplan(
         self,
         net: Brain,
-        steps: int = 50,
+        steps: int = 200,
     ):
         def subplan_optim_loss(xs):
-            return xs[5] - xs[4] + xs[1] + xs[0]
+            # return xs[5] - xs[4] + xs[1] + xs[0]
+            return xs[1]
 
         net = net.eval()
         jacobian = jacrev(lambda x, y, z: subplan_optim_loss(net(x, y, z)), 2)
         before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
-        for _ in range(steps):
+        for _ in trange(steps):
             grad = jacobian(self.obs, self.goal, self.noise)
             grad = grad.squeeze(0)
             self.noise = self.noise + grad * self.lr
@@ -107,7 +125,7 @@ class State:
     def optimize_plan(
         self,
         net: Brain,
-        steps: int = 200,
+        steps: int = 300,
     ):
         def plan_optim_loss(xs):
             return xs[5] - xs[4] + xs[0]
@@ -116,7 +134,9 @@ class State:
         jacobian = jacrev(lambda x, y, z: plan_optim_loss(net(x, y, z)), (1, 2))
         count = 0
         before = plan_optim_loss(net(self.obs, self.goal, self.noise))
-        while self.generally_possible < 0.9 and count < steps:
+        # with tqdm(total=steps) as pbar:
+        for _ in trange(steps, desc=f"plan_optim"):
+            # while self.generally_possible < 0.9 and count < steps:
             count += 1
             grads = jacobian(self.obs, self.goal, self.noise)
             grads = [g.squeeze(0) for g in grads]
@@ -194,9 +214,9 @@ class Memory:
         self.midpoint = buffer[(start + end) // 2].obs
         self.num_moves = end - start
         self.predicted_reward = sum([r.reward for r in buffer[start:end]])
-        self.acts = torch.tensor([t.act for t in buffer[start:end]])
+        self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
         if self.num_moves < 11:
-            self.acts[self.num_moves - 1] = 32
+            self.acts[self.num_moves - 1] = 35
         self.noise = None
         self.can_act = 1 if self.num_moves <= 10 else 0
         self.good_plan = 1 if self.num_moves <= 50 else 0
@@ -207,27 +227,33 @@ class ExperienceBuffer:
     def __init__(self) -> None:
         self.buffer = []
 
-    def add(self, example: State):
+    def add(self, example: Memory):
         self.buffer.append(example)
 
-    def sample_preprocess(self, net: Brain, batch_size: int) -> list[Memory]:
+    def sample_preprocess(self, net: Brain, batch_size: int):
         mems = [
             self.buffer[i] for i in np.random.randint(0, len(self.buffer), batch_size)
         ]
-        obs = torch.stack([m.obs for m in mems])
-        goal = torch.stack([m.goal for m in mems])
-        if len(goal[0].shape > 2):
-            goal = net.vision(goal)
-        noise = torch.rand_like(goal)
+        obs = torch.stack([m.obs for m in mems]).float()
+        goal = torch.stack([m.goal for m in mems]).float()
+        if len(goal[0].shape) > 2:
+            goal = net.vision(net.preprocess_frame(goal))
+        noise = torch.rand_like(goal).float()
         ins = (obs, goal, noise)
-        gen_poss = torch.stack([m.gen_poss for m in mems])
-        this_turn_poss = torch.stack([m.this_turn_poss for m in mems])
+
         midpoint = torch.stack([m.midpoint for m in mems])
-        if len(midpoint[0].shape > 2):
-            midpoint = net.vision(midpoint)
-        acts = torch.stack([m.acts for m in mems])
-        num_moves = torch.stack([m.num_moves for m in mems])
-        predicted_reward = torch.stack([m.predicted_reward for m in mems])
+        if len(midpoint[0].shape) > 2:
+            midpoint = net.vision(net.preprocess_frame(midpoint))
+        acts = torch.stack([m.acts for m in mems]).long()
+
+        def scalar_prep(x):
+            return torch.tensor(x).unsqueeze(-1).float()
+
+        predicted_reward = scalar_prep([m.predicted_reward for m in mems])
+        num_moves = scalar_prep([m.num_moves for m in mems])
+        this_turn_poss = scalar_prep([m.this_turn_poss for m in mems])
+        gen_poss = scalar_prep([m.gen_poss for m in mems])
+
         labels = (gen_poss, this_turn_poss, midpoint, acts, num_moves, predicted_reward)
         return ins, labels
 

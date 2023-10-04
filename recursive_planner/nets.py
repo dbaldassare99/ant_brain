@@ -86,7 +86,7 @@ class Action(nn.Module):
         self.unfold = nn.LSTM(1, 16, batch_first=True)
         self.encoder_h = Vects2_16()
         self.encoder_c = Vects2_16()
-        self.action_decoder = nn.Linear(16, 33)
+        self.action_decoder = nn.Linear(16, 36)
 
     def forward(self, vects: torch.Tensor):
         batch = vects.shape[0]
@@ -95,6 +95,7 @@ class Action(nn.Module):
         inputs = torch.ones(batch, 10, 1)
         acts, (h, c) = self.unfold(inputs, (h, c))
         acts = self.action_decoder(acts)
+        acts = acts.view(batch, 36, 10)
         return acts
 
 

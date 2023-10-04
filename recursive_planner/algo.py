@@ -1,22 +1,17 @@
 # Get Goal
 # Recursive bad boy:
 from nets import Brain
+from tqdm import trange
 import numpy as np
 import torch
-from buffer import (
-    ExperienceBuffer,
-    State,
-    StateQueue,
-    Memory,
-    Timestep,
-)
+from buffer import ExperienceBuffer, State, StateQueue, Memory, Timestep, SMA
 import copy
 
 
 class RP:
     def __init__(self, env) -> None:
         self.env = env
-        self.net = Brain()
+        self.net = Brain().float()
         self.notes = ExperienceBuffer()
 
     def play(self):
@@ -32,8 +27,8 @@ class RP:
     def random_bootstrap(self) -> None:
         buffer = []
         _ = self.env.reset()
-        random_play_len = 1_000
-        max_sample_length = 100
+        random_play_len = 5_000
+        max_sample_length = 500
         assert max_sample_length < random_play_len
         for _ in range(random_play_len):
             action = self.env.action_space.sample()
@@ -42,9 +37,7 @@ class RP:
         for _ in range(100):
             start = np.random.randint(0, random_play_len - max_sample_length)
             end = start + np.random.randint(1, max_sample_length)
-            mem = Memory(State()).rand_start(buffer, start, end)
-            print(mem)
-            self.notes.add(mem)
+            self.notes.add(Memory(State()).rand_start(buffer, start, end))
 
         self.train()
 
@@ -53,7 +46,9 @@ class RP:
         state: State,
     ) -> Memory:
         arg_state = copy.copy(state)  # to see how close we got!
+        print(state.possible_this_turn)
         state.optimize_subplan(self.net)
+        print(state.possible_this_turn)
         if state.possible_this_turn >= 0.5:
             action_sequence = state.get_action_sequence()
             queue = StateQueue()
@@ -61,7 +56,7 @@ class RP:
                 queue(self.env.step(action))
             # get info abt the action
             state.optimize_subplan(self.net)
-            action_record = ActionMemory(state, queue, action_sequence)
+            action_record = Memory(state).add_action(queue, action_sequence)
             self.notes.add(action_record)
             return action_record
         else:
@@ -82,8 +77,8 @@ class RP:
             check_state = copy.copy(state)
             check_state.obs = memory_part_3.last_obs
             check_state.optimize_subplan(self.net)
-            plan_record = PlanMemory(
-                state, [memory_part_1, memory_part_2, memory_part_3]
+            plan_record = Memory(state).add_plan(
+                [memory_part_1, memory_part_2, memory_part_3]
             )
             plan_record.gen_poss = (
                 1
@@ -96,12 +91,15 @@ class RP:
 
     def train(self):
         optimizer = torch.optim.Adam(self.net.parameters())
-        for _ in range(100):
+        pbar = trange(300)
+        loss_sma = SMA(10)
+        for i in pbar:
             ins, labels = self.notes.sample_preprocess(self.net, 10)
             optimizer.zero_grad()
-            outputs = self.net(ins)
+            outputs = self.net(*ins)
             loss = self.loss_fn(outputs, labels)
-            print(loss)
+            loss_sma.add(loss.item())
+            pbar.set_postfix_str(f"loss: {loss_sma.mean():.2f}")
             loss.backward()
             optimizer.step()
 
@@ -121,16 +119,22 @@ class RP:
         # acts,
         # num_moves,
         # predicted_reward,
+        def list_mean(l):
+            return sum(l) / len(l)
+
         labels = [l if l is not None else o for l, o in zip(labels, outputs)]
         scalar_x = scalar_only(outputs)
         scalar_y = scalar_only(labels)
-        scalar_loss = sum(
-            [torch.nn.functional.mse_loss(x, y) for x, y in zip(scalar_x, scalar_y)]
+        scalar_loss = list_mean(
+            [
+                torch.nn.functional.mse_loss(x, y).mean()
+                for x, y in zip(scalar_x, scalar_y)
+            ]
         )
         vect_x = vect_only(outputs)
         vect_y = vect_only(labels)
-        vect_loss = torch.nn.functional.cosine_similarity(vect_x, vect_y)
+        vect_loss = torch.nn.functional.cosine_similarity(vect_x, vect_y).mean()
         cat_x = categorical_only(outputs)
         cat_y = categorical_only(labels)
-        cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y)
-        return sum([scalar_loss, vect_loss, cat_loss])
+        cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y).mean()
+        return list_mean([scalar_loss, vect_loss, cat_loss]).float()
