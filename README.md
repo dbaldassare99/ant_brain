@@ -1,6 +1,6 @@
 # ant_brain
-* My repo to try out research ideas for small(ish) networks.
-* The name comes from how bugs have teeny brains, but are capable of working with turbulence and other systems that we haven't solved.
+* A repo to try out research ideas for small(ish) networks.
+* The name comes from how bugs have teeny brains but are capable of working with turbulence and other systems that we haven't solved.
 
 # why
 * It's fun (＾▽＾)
