@@ -1,4 +1,4 @@
-from agent import Brain
+from nets import Brain
 from buffer import State
 import torch
 
@@ -12,8 +12,8 @@ import torch
 
 
 def test_brain_0_batch():
-    frame_1 = torch.randn(224, 240, 3)
-    frame_2 = torch.randn(224, 240, 3)
+    obs = torch.randn(224, 240, 3)
+    goal = torch.randn(16)
     noise = torch.randn(16)
     brain = Brain().eval()  # normalize fails if not eval because of batchnorm
     (
@@ -23,7 +23,7 @@ def test_brain_0_batch():
         acts,
         num_moves,
         predicted_reward,
-    ) = brain(frame_1, frame_2, noise)
+    ) = brain(obs, goal, noise)
     assert generally_possibe.shape == torch.Size([1])
     assert possibe_this_turn.shape == torch.Size([1])
     assert midpoint.shape == torch.Size([16])
@@ -33,8 +33,8 @@ def test_brain_0_batch():
 
 
 def test_brain_1_batch():
-    frame_1 = torch.randn(1, 224, 240, 3)
-    frame_2 = torch.randn(1, 224, 240, 3)
+    obs = torch.randn(1, 224, 240, 3)
+    goal = torch.randn(1, 16)
     noise = torch.randn(1, 16)
     brain = Brain().eval()  # normalize fails if not eval because of batchnorm
     (
@@ -44,7 +44,7 @@ def test_brain_1_batch():
         acts,
         num_moves,
         predicted_reward,
-    ) = brain(frame_1, frame_2, noise)
+    ) = brain(obs, goal, noise)
     assert generally_possibe.shape == torch.Size([1, 1])
     assert possibe_this_turn.shape == torch.Size([1, 1])
     assert midpoint.shape == torch.Size([1, 16])
@@ -54,8 +54,8 @@ def test_brain_1_batch():
 
 
 def test_brain_10_batch():
-    frame_1 = torch.randn(10, 224, 240, 3)
-    frame_2 = torch.randn(10, 224, 240, 3)
+    obs = torch.randn(10, 224, 240, 3)
+    goal = torch.randn(10, 16)
     noise = torch.randn(10, 16)
     brain = Brain()
     (
@@ -65,7 +65,7 @@ def test_brain_10_batch():
         acts,
         num_moves,
         predicted_reward,
-    ) = brain(frame_1, frame_2, noise)
+    ) = brain(obs, goal, noise)
     assert generally_possibe.shape == torch.Size([10, 1])
     assert possibe_this_turn.shape == torch.Size([10, 1])
     assert midpoint.shape == torch.Size([10, 16])
@@ -75,20 +75,20 @@ def test_brain_10_batch():
 
 
 def test_optimize_subplan():
-    frame_1 = torch.randn(224, 240, 3)
-    frame_2 = torch.randn(224, 240, 3)
+    obs = torch.randn(224, 240, 3)
+    goal = torch.randn(16)
     noise = torch.randn(16)
-    state = State(obs=frame_1, goal=frame_2, noise=noise, gen_poss=0.0)
+    state = State(obs=obs, goal=goal, noise=noise, gen_poss=0.0)
     brain = Brain()
     before, after = state.optimize_subplan(brain)
     assert before < after
 
 
 def test_optimize_plan():
-    frame_1 = torch.randn(224, 240, 3)
-    frame_2 = torch.randn(224, 240, 3)
+    obs = torch.randn(224, 240, 3)
+    goal = torch.randn(16)
     noise = torch.randn(16)
-    state = State(obs=frame_1, goal=frame_2, noise=noise, gen_poss=0.0)
+    state = State(obs=obs, goal=goal, noise=noise, gen_poss=0.0)
     brain = Brain()
     before, after = state.optimize_plan(brain)
     assert before < after

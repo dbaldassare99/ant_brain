@@ -30,13 +30,13 @@ ENV_STRING = "SuperMarioBros-Nes"
 def main():
     env = retro.make(game=ENV_STRING, use_restricted_actions=retro.Actions.DISCRETE)
     env.reset()
+    reward_sum = 0
 
     action_shape = env.action_space.shape or env.action_space.n
-    print(f"action shape: {action_shape}")
-    print(f"sample: {env.action_space.sample()}")
     while True:
         obs, reward, terminated, truncated, info = env.step(6)
-        print(obs.shape)
+        reward_sum += reward
+        print(reward_sum)
         env.render()
         if terminated:
             env.reset()

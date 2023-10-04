@@ -115,20 +115,17 @@ class Brain(nn.Module):
         ob = ob.view(batch, 3, 224, 240)
         return ob
 
-    def forward(
-        self, frame_1: torch.Tensor, frame_2: torch.Tensor, noise: torch.Tensor
-    ):
-        frame_1 = torch.Tensor(frame_1).float()
+    def forward(self, frame_1: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor):
         batched = True
-        if len(frame_1.shape) == 3:
+        if len(frame_1.shape) == 3:  # batch if not batched
             frame_1 = frame_1.unsqueeze(0)
-            frame_2 = frame_2.unsqueeze(0)
+            goal = goal.unsqueeze(0)
             noise = noise.unsqueeze(0)
             batched = False
-        obs = [frame_1, frame_2]
+        obs = [frame_1]  # add in 2nd frame here later to see goal
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
-        seen = torch.cat([seen, noise.unsqueeze(1)], dim=1)
+        seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
         rets = (
             self.generally_possibe(vects),
@@ -138,6 +135,6 @@ class Brain(nn.Module):
             self.num_moves(vects),
             self.predicted_reward(vects),
         )
-        if not batched:
+        if not batched:  # unbatch if not batched
             rets = [r.squeeze(0) for r in rets]
         return rets

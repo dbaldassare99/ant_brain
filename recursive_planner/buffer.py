@@ -1,6 +1,25 @@
 import torch
-from agent import Brain
+from nets import Brain
 from torch.func import jacrev, vmap
+import numpy as np
+from dataclasses import dataclass
+
+# class Buffer:
+#     def __init__(self) -> None:
+#         self.buffer = []
+
+#     def add(self, example):
+#         self.buffer.append(example)
+
+
+@dataclass
+class Timestep:
+    obs: np.ndarray
+    reward: float
+    terminated: bool
+    truncated: bool
+    info: dict
+    act: int
 
 
 class StateQueue:
@@ -26,7 +45,7 @@ class State:
     def __init__(
         self,
         obs: torch.Tensor = None,
-        goal: torch.Tensor = torch.randn(224, 240, 3),  # honestly, too jank 4 me
+        goal: torch.Tensor = torch.randn(16),  # honestly, too jank 4 me
         noise: torch.Tensor = torch.randn(16),  # yep that's jank
         vects: torch.Tensor = None,
         midpoint: torch.Tensor = None,
@@ -49,8 +68,9 @@ class State:
         self.lr = 5
 
     def get_action_sequence(self) -> list:
-        assert len(self.acts.shape) == 3  # batched
-        acts = torch.argmax(self.acts, dim=-1)
+        if len(self.acts.shape) < 3:  # if unbatched
+            acts = self.acts.unsqueeze(0)
+        acts = torch.argmax(acts, dim=-1)
         indices = torch.where(acts == 32, acts, 0.0)
         indices = indices.nonzero()
         action_list = [*torch.split(acts, 1)]
@@ -62,14 +82,6 @@ class State:
             visited.append(batch)
             action_list[batch] = action_list[batch][:idx]
         return action_list
-
-    # def goal_optim_loss(self):
-    #     return self.predicted_reward - self.num_moves + self.gen_poss
-
-    # def subplan_optim_loss(self):
-    #     return (
-    #         self.predicted_reward - self.num_moves + self.this_turn_poss + self.gen_poss
-    #     )
 
     # no_batch
     def optimize_subplan(
@@ -152,33 +164,43 @@ class Memory:
         self.num_moves = state.num_moves
         self.noise = state.noise
 
-
-class ActionMemory(Memory):
-    def __init__(
-        self, state: State, queue: StateQueue, action_sequence: list[torch.Tensor]
+    def add_action(
+        self, queue: StateQueue, action_sequence: list[torch.Tensor]
     ) -> None:
-        super().__init__(state)
-        self.can_act = 1 if state.num_moves < 3 else 0
+        self.can_act = 1 if self.num_moves < 3 else 0
         self.good_plan = 1 if self.can_act == 1 else None
         self.midpoint = queue.midpoint()
         self.num_moves = len(action_sequence)
         self.last_obs = queue.final_obs()
+        return self
 
-
-class PlanMemory(Memory):
-    def __init__(self, state: State, memories: list[ActionMemory]) -> None:
-        super().__init__(state)
+    def add_plan(self, memories: list) -> None:
         self.num_moves = sum([m.num_moves for m in memories])
         self.predicted_reward = sum([m.reward for m in memories])
         self.obs = memories[0].obs
         self.goal = memories[-1].goal
         # we could say no... because we're alrealy < 95% this turn poss to get here
         self.this_turn_poss = None
+        return self
 
-    def add(self, memory: Memory) -> None:
-        self.num_moves += memory.num_moves
-        self.predicted_reward += memory.reward
-        self.goal = memory.goal
+    # def add(self, memory: Memory) -> None: # maybe need this later?
+    #     self.num_moves += memory.num_moves
+    #     self.predicted_reward += memory.reward
+    #     self.goal = memory.goal
+
+    def rand_start(self, buffer: list[Timestep], start: int, end: int):
+        self.obs = buffer[start].obs
+        self.goal = buffer[end].obs
+        self.midpoint = buffer[(start + end) // 2].obs
+        self.num_moves = end - start
+        self.predicted_reward = sum([r.reward for r in buffer[start:end]])
+        self.acts = torch.tensor([t.act for t in buffer[start:end]])
+        if self.num_moves < 11:
+            self.acts[self.num_moves - 1] = 32
+        self.noise = None
+        self.can_act = 1 if self.num_moves <= 10 else 0
+        self.good_plan = 1 if self.num_moves <= 50 else 0
+        return self
 
 
 class ExperienceBuffer:
@@ -187,3 +209,43 @@ class ExperienceBuffer:
 
     def add(self, example: State):
         self.buffer.append(example)
+
+    def sample_preprocess(self, net: Brain, batch_size: int) -> list[Memory]:
+        mems = [
+            self.buffer[i] for i in np.random.randint(0, len(self.buffer), batch_size)
+        ]
+        obs = torch.stack([m.obs for m in mems])
+        goal = torch.stack([m.goal for m in mems])
+        if len(goal[0].shape > 2):
+            goal = net.vision(goal)
+        noise = torch.rand_like(goal)
+        ins = (obs, goal, noise)
+        gen_poss = torch.stack([m.gen_poss for m in mems])
+        this_turn_poss = torch.stack([m.this_turn_poss for m in mems])
+        midpoint = torch.stack([m.midpoint for m in mems])
+        if len(midpoint[0].shape > 2):
+            midpoint = net.vision(midpoint)
+        acts = torch.stack([m.acts for m in mems])
+        num_moves = torch.stack([m.num_moves for m in mems])
+        predicted_reward = torch.stack([m.predicted_reward for m in mems])
+        labels = (gen_poss, this_turn_poss, midpoint, acts, num_moves, predicted_reward)
+        return ins, labels
+
+
+class TorchGym:
+    def __init__(self, gym):
+        self.gym = gym
+        self.action_space = gym.action_space
+
+    # gymnasium.Env.step(self, action: ActType) → tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]
+    def step(self, action):
+        ret = self.gym.step(action)
+        obs = torch.tensor(ret[0]).float()
+        rew = torch.tensor(ret[1]).float()
+        return obs, rew, ret[2], ret[3], ret[4]
+
+    # gymnasium.Env.reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
+    def reset(self):
+        ret = self.gym.reset()
+        obs = torch.tensor(ret[0]).float()
+        return obs, ret[1]
