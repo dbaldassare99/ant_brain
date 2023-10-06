@@ -1,5 +1,5 @@
 import torch
-from nets import Brain
+from nets import Brain, BrainOut
 from torch.func import jacrev, vmap
 import numpy as np
 from dataclasses import dataclass
@@ -108,7 +108,7 @@ class State:
     ):
         def subplan_optim_loss(xs):
             # return xs[5] - xs[4] + xs[1] + xs[0]
-            return xs[1]
+            return xs["poss_this_turn"]
 
         net = net.eval()
         jacobian = jacrev(lambda x, y, z: subplan_optim_loss(net(x, y, z)), 2)
@@ -128,13 +128,12 @@ class State:
         steps: int = 300,
     ):
         def plan_optim_loss(xs):
-            return xs[5] - xs[4] + xs[0]
+            return xs["gen_poss"] + xs["rew"]  # - xs["num_moves"]
 
         net = net.eval()
         jacobian = jacrev(lambda x, y, z: plan_optim_loss(net(x, y, z)), (1, 2))
         count = 0
         before = plan_optim_loss(net(self.obs, self.goal, self.noise))
-        # with tqdm(total=steps) as pbar:
         for _ in trange(steps, desc=f"plan_optim"):
             # while self.generally_possible < 0.9 and count < steps:
             count += 1
@@ -158,14 +157,13 @@ class State:
         self.goal = goal if goal else self.goal
         self.noise = noise if noise else self.noise
 
-        (
-            self.generally_possible,
-            self.possible_this_turn,
-            self.midpoint,
-            self.acts,
-            self.num_moves,
-            self.predicted_reward,
-        ) = net(self.obs, self.goal, self.noise)
+        outs = BrainOut(net(self.obs, self.goal, self.noise))
+        self.generally_possible = outs.gen_poss
+        self.possible_this_turn = outs.poss_this_turn
+        self.midpoint = outs.midpoint
+        self.acts = outs.acts
+        self.num_moves = outs.num_moves
+        self.predicted_reward = outs.rew
 
 
 class Memory:
@@ -192,7 +190,6 @@ class Memory:
         self.midpoint = queue.midpoint()
         self.num_moves = len(action_sequence)
         self.last_obs = queue.final_obs()
-        return self
 
     def add_plan(self, memories: list) -> None:
         self.num_moves = sum([m.num_moves for m in memories])
@@ -201,7 +198,6 @@ class Memory:
         self.goal = memories[-1].goal
         # we could say no... because we're alrealy < 95% this turn poss to get here
         self.this_turn_poss = None
-        return self
 
     # def add(self, memory: Memory) -> None: # maybe need this later?
     #     self.num_moves += memory.num_moves
@@ -253,8 +249,16 @@ class ExperienceBuffer:
         num_moves = scalar_prep([m.num_moves for m in mems])
         this_turn_poss = scalar_prep([m.this_turn_poss for m in mems])
         gen_poss = scalar_prep([m.gen_poss for m in mems])
-
-        labels = (gen_poss, this_turn_poss, midpoint, acts, num_moves, predicted_reward)
+        labels = BrainOut(
+            {
+                "gen_poss": gen_poss,
+                "poss_this_turn": this_turn_poss,
+                "midpoint": midpoint,
+                "acts": acts,
+                "num_moves": num_moves,
+                "rew": predicted_reward,
+            }
+        )
         return ins, labels
 
 

@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 
-# from buffer import State
-
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
 # and outputs a vector of shape (1, 16)
@@ -116,7 +114,9 @@ class Brain(nn.Module):
         ob = ob.view(batch, 3, 224, 240)
         return ob
 
-    def forward(self, frame_1: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor):
+    def forward(
+        self, frame_1: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
+    ) -> dict:
         batched = True
         if len(frame_1.shape) == 3:  # batch if not batched
             frame_1 = frame_1.unsqueeze(0)
@@ -128,14 +128,42 @@ class Brain(nn.Module):
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
         vects = self.trunk(seen)
-        rets = (
-            self.generally_possibe(vects),
-            self.possibe_this_turn(vects),
-            self.midpoint(vects),
-            self.acts(vects),
-            self.num_moves(vects),
-            self.predicted_reward(vects),
-        )
+        rets = {
+            "gen_poss": self.generally_possibe(vects),
+            "poss_this_turn": self.possibe_this_turn(vects),
+            "midpoint": self.midpoint(vects),
+            "acts": self.acts(vects),
+            "num_moves": self.num_moves(vects),
+            "rew": self.predicted_reward(vects),
+        }
         if not batched:  # unbatch if not batched
-            rets = [r.squeeze(0) for r in rets]
+            rets = {k: v.squeeze(0) for k, v in rets.items()}
         return rets
+
+
+class BrainOut:
+    def __init__(self, outs: dict[str, torch.Tensor]):
+        self.gen_poss = outs["gen_poss"]
+        self.poss_this_turn = outs["poss_this_turn"]
+        self.midpoint = outs["midpoint"]
+        self.acts = outs["acts"]
+        self.num_moves = outs["num_moves"]
+        self.rew = outs["rew"]
+
+    def __iter__(self):
+        return iter(
+            [
+                self.gen_poss,
+                self.poss_this_turn,
+                self.midpoint,
+                self.acts,
+                self.num_moves,
+                self.rew,
+            ]
+        )
+
+    # slightly cursed copilot code
+    def replace_if_none(self, other: BrainOut):
+        for k, v in self.__dict__.items():
+            if v is None:
+                self.__dict__[k] = other.__dict__[k]

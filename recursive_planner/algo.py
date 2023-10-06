@@ -1,6 +1,6 @@
 # Get Goal
 # Recursive bad boy:
-from nets import Brain
+from nets import Brain, BrainOut
 from tqdm import trange
 import numpy as np
 import torch
@@ -27,14 +27,14 @@ class RP:
     def random_bootstrap(self) -> None:
         buffer = []
         _ = self.env.reset()
-        random_play_len = 5_000
-        max_sample_length = 500
+        random_play_len = 1_000
+        max_sample_length = 100
         assert max_sample_length < random_play_len
         for _ in range(random_play_len):
             action = self.env.action_space.sample()
             buffer.append(Timestep(*self.env.step(action), action))
 
-        for _ in range(100):
+        for _ in range(5_000):
             start = np.random.randint(0, random_play_len - max_sample_length)
             end = start + np.random.randint(1, max_sample_length)
             self.notes.add(Memory(State()).rand_start(buffer, start, end))
@@ -49,14 +49,15 @@ class RP:
         print(state.possible_this_turn)
         state.optimize_subplan(self.net)
         print(state.possible_this_turn)
-        if state.possible_this_turn >= 0.5:
+        if state.possible_this_turn >= 0.2:
             action_sequence = state.get_action_sequence()
             queue = StateQueue()
             for action in action_sequence[0]:  # not parallel
                 queue(self.env.step(action))
             # get info abt the action
             state.optimize_subplan(self.net)
-            action_record = Memory(state).add_action(queue, action_sequence)
+            action_record = Memory(state)
+            action_record.add_action(queue, action_sequence)
             self.notes.add(action_record)
             return action_record
         else:
@@ -77,13 +78,12 @@ class RP:
             check_state = copy.copy(state)
             check_state.obs = memory_part_3.last_obs
             check_state.optimize_subplan(self.net)
-            plan_record = Memory(state).add_plan(
-                [memory_part_1, memory_part_2, memory_part_3]
-            )
+            plan_record = Memory(state)
+            plan_record.add_plan([memory_part_1, memory_part_2, memory_part_3])
             plan_record.gen_poss = (
                 1
                 if check_state.num_moves < 3
-                or arg_state.predicted_reward - plan_record.prediced_reward <= 3
+                or arg_state.predicted_reward - plan_record.predicted_reward <= 3
                 else 0
             )
             self.notes.add(plan_record)
@@ -91,38 +91,33 @@ class RP:
 
     def train(self):
         optimizer = torch.optim.Adam(self.net.parameters())
-        pbar = trange(300)
+        pbar = trange(200)
         loss_sma = SMA(10)
         for i in pbar:
             ins, labels = self.notes.sample_preprocess(self.net, 10)
             optimizer.zero_grad()
-            outputs = self.net(*ins)
+            outputs = BrainOut(self.net(*ins))
             loss = self.loss_fn(outputs, labels)
             loss_sma.add(loss.item())
             pbar.set_postfix_str(f"loss: {loss_sma.mean():.2f}")
             loss.backward()
             optimizer.step()
 
-    def loss_fn(self, outputs, labels):
-        def scalar_only(l):
-            return (l[0], l[1], l[4], l[5])
+    def loss_fn(self, outputs: BrainOut, labels: BrainOut):
+        def scalar_only(l: BrainOut):
+            return l.gen_poss, l.poss_this_turn, l.num_moves, l.rew
 
-        def vect_only(l):
-            return l[2]
+        def vect_only(l: BrainOut):
+            return l.midpoint
 
-        def categorical_only(l):
-            return l[3]
+        def categorical_only(l: BrainOut):
+            return l.acts
 
-        # gen_poss,
-        # this_turn_poss,
-        # midpoint,
-        # acts,
-        # num_moves,
-        # predicted_reward,
         def list_mean(l):
             return sum(l) / len(l)
 
-        labels = [l if l is not None else o for l, o in zip(labels, outputs)]
+        labels.replace_if_none(outputs)
+        # labels = [l if l is not None else o for l, o in zip(labels, outputs)]
         scalar_x = scalar_only(outputs)
         scalar_y = scalar_only(labels)
         scalar_loss = list_mean(

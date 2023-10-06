@@ -1,0 +1,6 @@
+gen_poss
+poss_this_turn
+midpoint
+acts
+num_moves
+rew

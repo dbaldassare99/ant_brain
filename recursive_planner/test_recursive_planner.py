@@ -1,35 +1,20 @@
-from nets import Brain
+from nets import Brain, BrainOut
 from buffer import State
 import torch
 
-# self.vects = vects
-# self.gen_poss = gen_poss
-# self.this_turn_poss = this_turn_poss
-# self.midpoint = midpoint
-# self.predicted_reward = predicted_reward
-# self.predicted_moves = predicted_moves
-# self.acts = acts
 
-
-def test_brain_0_batch():
+def test_brain_batchless():
     obs = torch.randn(224, 240, 3)
     goal = torch.randn(16)
     noise = torch.randn(16)
     brain = Brain().eval()  # normalize fails if not eval because of batchnorm
-    (
-        generally_possibe,
-        possibe_this_turn,
-        midpoint,
-        acts,
-        num_moves,
-        predicted_reward,
-    ) = brain(obs, goal, noise)
-    assert generally_possibe.shape == torch.Size([1])
-    assert possibe_this_turn.shape == torch.Size([1])
-    assert midpoint.shape == torch.Size([16])
-    assert num_moves.shape == torch.Size([1])
-    assert acts.shape == torch.Size([10, 33])
-    assert predicted_reward.shape == torch.Size([1])
+    outs = BrainOut(brain(obs, goal, noise))
+    assert outs.gen_poss.shape == torch.Size([1])
+    assert outs.poss_this_turn.shape == torch.Size([1])
+    assert outs.midpoint.shape == torch.Size([16])
+    assert outs.num_moves.shape == torch.Size([1])
+    assert outs.acts.shape == torch.Size([36, 10])
+    assert outs.rew.shape == torch.Size([1])
 
 
 def test_brain_1_batch():
@@ -37,20 +22,13 @@ def test_brain_1_batch():
     goal = torch.randn(1, 16)
     noise = torch.randn(1, 16)
     brain = Brain().eval()  # normalize fails if not eval because of batchnorm
-    (
-        generally_possibe,
-        possibe_this_turn,
-        midpoint,
-        acts,
-        num_moves,
-        predicted_reward,
-    ) = brain(obs, goal, noise)
-    assert generally_possibe.shape == torch.Size([1, 1])
-    assert possibe_this_turn.shape == torch.Size([1, 1])
-    assert midpoint.shape == torch.Size([1, 16])
-    assert num_moves.shape == torch.Size([1, 1])
-    assert acts.shape == torch.Size([1, 10, 33])
-    assert predicted_reward.shape == torch.Size([1, 1])
+    outs = BrainOut(brain(obs, goal, noise))
+    assert outs.gen_poss.shape == torch.Size([1])
+    assert outs.poss_this_turn.shape == torch.Size([1])
+    assert outs.midpoint.shape == torch.Size([16])
+    assert outs.num_moves.shape == torch.Size([1])
+    assert outs.acts.shape == torch.Size([36, 10])
+    assert outs.rew.shape == torch.Size([1])
 
 
 def test_brain_10_batch():
@@ -58,20 +36,13 @@ def test_brain_10_batch():
     goal = torch.randn(10, 16)
     noise = torch.randn(10, 16)
     brain = Brain()
-    (
-        generally_possibe,
-        possibe_this_turn,
-        midpoint,
-        acts,
-        num_moves,
-        predicted_reward,
-    ) = brain(obs, goal, noise)
-    assert generally_possibe.shape == torch.Size([10, 1])
-    assert possibe_this_turn.shape == torch.Size([10, 1])
-    assert midpoint.shape == torch.Size([10, 16])
-    assert num_moves.shape == torch.Size([10, 1])
-    assert acts.shape == torch.Size([10, 10, 33])
-    assert predicted_reward.shape == torch.Size([10, 1])
+    outs = BrainOut(brain(obs, goal, noise))
+    assert outs.gen_poss.shape == torch.Size([10, 1])
+    assert outs.poss_this_turn.shape == torch.Size([10, 1])
+    assert outs.midpoint.shape == torch.Size([10, 16])
+    assert outs.num_moves.shape == torch.Size([10, 1])
+    assert outs.acts.shape == torch.Size([10, 36, 10])
+    assert outs.rew.shape == torch.Size([10, 1])
 
 
 def test_optimize_subplan():
@@ -97,7 +68,5 @@ def test_optimize_plan():
 if __name__ == "__main__":
     test_brain_1_batch()
     test_brain_10_batch()
-    print("subplan")
     test_optimize_subplan()
-    print("plan")
     test_optimize_plan()
