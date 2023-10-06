@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -131,8 +132,8 @@ class Brain(nn.Module):
         vects = seen
         # vects = self.trunk(seen) # doesn't help with loss
         rets = {
-            "gen_poss": self.generally_possibe(vects),
-            "poss_this_turn": self.possibe_this_turn(vects),
+            "gen_poss": F.sigmoid(self.generally_possibe(vects)),
+            "poss_this_turn": F.sigmoid(self.possibe_this_turn(vects)),
             "midpoint": self.midpoint(vects),
             "acts": self.acts(vects),
             "num_moves": self.num_moves(vects),
@@ -151,6 +152,7 @@ class BrainOut:
         self.acts = outs["acts"]
         self.num_moves = outs["num_moves"]
         self.rew = outs["rew"]
+        self.scalar_normalizer = Normalizer(4)
 
     def __iter__(self):
         return iter(
@@ -169,3 +171,39 @@ class BrainOut:
         for k, v in self.__dict__.items():
             if v is None:
                 self.__dict__[k] = other.__dict__[k]
+
+    def norm_scalars(self):
+        normalized = torch.stack(
+            [self.gen_poss, self.poss_this_turn, self.num_moves, self.rew]
+        ).view(4)
+        normalized = self.scalar_normalizer(normalized)
+        (
+            self.gen_poss,
+            self.poss_this_turn,
+            self.num_moves,
+            self.rew,
+        ) = normalized.split(1)
+
+
+class Normalizer:
+    def __init__(self, channels: int, maxlen: int = 1_000):
+        self.maxlen = maxlen
+        self.channels = channels
+        self.q = torch.zeros(maxlen, channels)
+        self.idx = 0
+
+    def __call__(self, vector: torch.Tensor):
+        self.add(vector)
+        return (vector - self.mean()) / self.std() + 0.5
+
+    def add(self, item: torch.Tensor):
+        self.q[self.idx] = item
+        self.idx += 1
+        if self.idx >= self.maxlen:
+            self.idx = 0
+
+    def mean(self):
+        return self.q.mean(dim=0)
+
+    def std(self):
+        return self.q.std(dim=0)

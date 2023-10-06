@@ -15,8 +15,7 @@ class RP:
         self.notes = ExperienceBuffer()
 
     def play(self):
-        self.random_bootstrap()
-        return
+        # self.random_bootstrap()
         obs, info = self.env.reset()
         state = State(obs=obs)
 
@@ -52,12 +51,16 @@ class RP:
         self,
         state: State,
     ) -> Memory:
+        self.net.eval()
         arg_state = copy.copy(state)  # to see how close we got!
-        print(state.poss_this_turn)
+        # print(state.poss_this_turn)
         state.optimize_subplan(self.net)
-        print(state.poss_this_turn)
-        if state.poss_this_turn >= 0.2:
+        # print(state.poss_this_turn)
+        # print(state.gen_poss)
+        # print(state.poss_this_turn)
+        if state.poss_this_turn >= 0.5:
             action_sequence = state.get_action_sequence()
+            print(action_sequence)
             queue = StateQueue()
             for action in action_sequence[0]:  # not parallel
                 queue(self.env.step(action))
@@ -97,8 +100,9 @@ class RP:
             return plan_record
 
     def train(self):
+        self.net.train()
         optimizer = torch.optim.Adam(self.net.parameters())
-        pbar = trange(800)
+        pbar = trange(200)
         loss_sma = SMA(10)
         for i in pbar:
             ins, labels = self.notes.sample_preprocess(self.net, 10)
@@ -126,7 +130,7 @@ class RP:
         labels.replace_if_none(outputs)
         scalar_x = scalar_only(outputs)
         scalar_y = scalar_only(labels)
-        print(outputs.num_moves, labels.num_moves)
+        # print(outputs.num_moves, labels.num_moves)
         scalar_losses = [
             torch.nn.functional.mse_loss(x, y).mean()
             for x, y in zip(scalar_x, scalar_y)
@@ -139,5 +143,5 @@ class RP:
         cat_x = categorical_only(outputs)
         cat_y = categorical_only(labels)
         cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y).mean()
-        print(scalar_loss.item(), vect_loss.item(), cat_loss.item())
+        # print(scalar_loss.item(), vect_loss.item(), cat_loss.item())
         return list_mean([scalar_loss, vect_loss, cat_loss]).float()

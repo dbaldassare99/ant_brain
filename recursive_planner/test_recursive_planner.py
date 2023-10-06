@@ -23,12 +23,12 @@ def test_brain_1_batch():
     noise = torch.randn(1, 16)
     brain = Brain().eval()  # normalize fails if not eval because of batchnorm
     outs = BrainOut(brain(obs, goal, noise))
-    assert outs.gen_poss.shape == torch.Size([1])
-    assert outs.poss_this_turn.shape == torch.Size([1])
-    assert outs.midpoint.shape == torch.Size([16])
-    assert outs.num_moves.shape == torch.Size([1])
-    assert outs.acts.shape == torch.Size([37, 10])
-    assert outs.rew.shape == torch.Size([1])
+    assert outs.gen_poss.shape == torch.Size([1, 1])
+    assert outs.poss_this_turn.shape == torch.Size([1, 1])
+    assert outs.midpoint.shape == torch.Size([1, 16])
+    assert outs.num_moves.shape == torch.Size([1, 1])
+    assert outs.acts.shape == torch.Size([1, 37, 10])
+    assert outs.rew.shape == torch.Size([1, 1])
 
 
 def test_brain_10_batch():
@@ -63,6 +63,15 @@ def test_optimize_plan():
     brain = Brain()
     before, after = state.optimize_plan(brain)
     assert before < after
+
+
+def test_get_action_sequence():
+    brain = Brain()
+    state = State()
+    state.obs = torch.randn(224, 240, 3)
+    state.update(brain)
+    action_sequence = state.get_action_sequence()
+    assert action_sequence[0].shape == torch.Size([10])
 
 
 if __name__ == "__main__":

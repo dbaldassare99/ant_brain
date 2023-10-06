@@ -83,12 +83,12 @@ class State:
         self.acts = acts
         self.num_moves = num_moves
         self.noise = noise
-        self.lr = 5
+        self.lr = 0.5
 
     def get_action_sequence(self) -> list:
         if len(self.acts.shape) < 3:  # if unbatched
             acts = self.acts.unsqueeze(0)
-        acts = torch.argmax(acts, dim=-1)
+        acts = torch.argmax(acts, dim=1)
         indices = torch.where(acts == 36, acts, 0.0)
         indices = indices.nonzero()
         action_list = [*torch.split(acts, 1)]
@@ -105,45 +105,65 @@ class State:
     def optimize_subplan(
         self,
         net: Brain,
-        steps: int = 200,
+        steps: int = 100,
     ):
         def subplan_optim_loss(xs):
-            # return xs[5] - xs[4] + xs[1] + xs[0]
-            return xs["poss_this_turn"]
+            outs = BrainOut(xs)
+            # outs.norm_scalars()
+            return outs.poss_this_turn  # + outs.rew  # - outs.num_moves
 
+        self.noise = torch.randn_like(self.noise)
+        self.update(net)
+        # print(self.poss_this_turn)
         net = net.eval()
         jacobian = jacrev(lambda x, y, z: subplan_optim_loss(net(x, y, z)), 2)
         before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
-        for _ in trange(steps):
+        for _ in trange(steps, desc=f"subplan_optim"):
             grad = jacobian(self.obs, self.goal, self.noise)
             grad = grad.squeeze(0)
             self.noise = self.noise + grad * self.lr
         after = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         self.update(net)
+        # print(self.poss_this_turn)
+        print(before, after)
+        print(after - before)
         return before, after
 
     # no batch!
     def optimize_plan(
         self,
         net: Brain,
-        steps: int = 300,
+        steps: int = 200,
     ):
-        def plan_optim_loss(xs):
-            return xs["gen_poss"] + xs["rew"]  # - xs["num_moves"]
+        def gen_poss_loss(xs):
+            outs = BrainOut(xs)
+            # outs.norm_scalars()
+            return outs.gen_poss
 
+        def full_plan_loss(xs):
+            outs = BrainOut(xs)
+            # outs.norm_scalars()
+            return outs.gen_poss + outs.rew  # - outs.num_moves
+
+        self.noise = torch.randn_like(self.noise)
+        self.goal = torch.randn_like(self.goal)
         net = net.eval()
-        jacobian = jacrev(lambda x, y, z: plan_optim_loss(net(x, y, z)), (1, 2))
-        count = 0
-        before = plan_optim_loss(net(self.obs, self.goal, self.noise))
-        for _ in trange(steps, desc=f"plan_optim"):
-            # while self.generally_possible < 0.9 and count < steps:
-            count += 1
-            grads = jacobian(self.obs, self.goal, self.noise)
+        gen_poss_grad = jacrev(lambda x, y, z: gen_poss_loss(net(x, y, z)), (1, 2))
+        full_opt = jacrev(lambda x, y, z: full_plan_loss(net(x, y, z)), (1, 2))
+        before = gen_poss_loss(net(self.obs, self.goal, self.noise))
+        self.update(net)
+        pbar = trange(steps, desc=f"plan_optim")
+        for i in pbar:
+            if self.gen_poss > 0.5:
+                grads = full_opt(self.obs, self.goal, self.noise)
+            else:
+                grads = gen_poss_grad(self.obs, self.goal, self.noise)
             grads = [g.squeeze(0) for g in grads]
             self.goal = self.goal + grads[0] * self.lr
             self.noise = self.noise + grads[1] * self.lr
             self.update(net)
-        after = plan_optim_loss(net(self.obs, self.goal, self.noise))
+            pbar.set_postfix_str(f"gen_poss: {self.gen_poss.item():.2f}")
+        after = gen_poss_loss(net(self.obs, self.goal, self.noise))
         return before, after
 
     def update(
