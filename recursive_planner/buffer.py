@@ -4,6 +4,7 @@ from torch.func import jacrev, vmap
 import numpy as np
 from dataclasses import dataclass
 from tqdm import trange
+from typing import List
 
 # class Buffer:
 #     def __init__(self) -> None:
@@ -68,17 +69,17 @@ class State:
         midpoint: torch.Tensor = None,
         acts: torch.Tensor = None,
         gen_poss: torch.Tensor = 0,
-        this_turn_poss: torch.Tensor = 0,
-        predicted_reward: torch.Tensor = 0,
+        poss_this_turn: torch.Tensor = 0,
+        rew: torch.Tensor = 0,
         num_moves: torch.Tensor = 0,
     ):
         self.obs = obs
         self.goal = goal
         self.vects = vects
-        self.generally_possible = gen_poss
-        self.possible_this_turn = this_turn_poss
+        self.gen_poss = gen_poss
+        self.poss_this_turn = poss_this_turn
         self.midpoint = midpoint
-        self.predicted_reward = predicted_reward
+        self.rew = rew
         self.acts = acts
         self.num_moves = num_moves
         self.noise = noise
@@ -88,7 +89,7 @@ class State:
         if len(self.acts.shape) < 3:  # if unbatched
             acts = self.acts.unsqueeze(0)
         acts = torch.argmax(acts, dim=-1)
-        indices = torch.where(acts == 35, acts, 0.0)
+        indices = torch.where(acts == 36, acts, 0.0)
         indices = indices.nonzero()
         action_list = [*torch.split(acts, 1)]
         action_list = [a.squeeze() for a in action_list]
@@ -158,12 +159,12 @@ class State:
         self.noise = noise if noise else self.noise
 
         outs = BrainOut(net(self.obs, self.goal, self.noise))
-        self.generally_possible = outs.gen_poss
-        self.possible_this_turn = outs.poss_this_turn
+        self.gen_poss = outs.gen_poss
+        self.poss_this_turn = outs.poss_this_turn
         self.midpoint = outs.midpoint
         self.acts = outs.acts
         self.num_moves = outs.num_moves
-        self.predicted_reward = outs.rew
+        self.rew = outs.rew
 
 
 class Memory:
@@ -174,10 +175,10 @@ class Memory:
         self.obs = state.obs
         self.goal = state.goal
         self.vects = state.vects
-        self.gen_poss = state.generally_possible
-        self.this_turn_poss = state.possible_this_turn
+        self.gen_poss = state.gen_poss
+        self.poss_this_turn = state.poss_this_turn
         self.midpoint = state.midpoint
-        self.reward = state.predicted_reward
+        self.rew = state.rew
         self.acts = state.acts
         self.num_moves = state.num_moves
         self.noise = state.noise
@@ -193,11 +194,11 @@ class Memory:
 
     def add_plan(self, memories: list) -> None:
         self.num_moves = sum([m.num_moves for m in memories])
-        self.predicted_reward = sum([m.reward for m in memories])
+        self.rew = sum([m.reward for m in memories])
         self.obs = memories[0].obs
         self.goal = memories[-1].goal
         # we could say no... because we're alrealy < 95% this turn poss to get here
-        self.this_turn_poss = None
+        self.poss_this_turn = None
 
     # def add(self, memory: Memory) -> None: # maybe need this later?
     #     self.num_moves += memory.num_moves
@@ -209,19 +210,21 @@ class Memory:
         self.goal = buffer[end].obs
         self.midpoint = buffer[(start + end) // 2].obs
         self.num_moves = end - start
-        self.predicted_reward = sum([r.reward for r in buffer[start:end]])
+        self.rew = sum([r.reward for r in buffer[start:end]])
         self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
-        if self.num_moves < 11:
-            self.acts[self.num_moves - 1] = 35
+        if self.num_moves < 10:
+            self.acts[self.num_moves] = 36
         self.noise = None
-        self.can_act = 1 if self.num_moves <= 10 else 0
-        self.good_plan = 1 if self.num_moves <= 50 else 0
+        self.gen_poss = 1 if self.num_moves <= 50 else 0
+        self.poss_this_turn = 1 if self.num_moves <= 10 else 0
         return self
 
 
 class ExperienceBuffer:
     def __init__(self) -> None:
-        self.buffer = []
+        self.buffer: List[Memory] = []
+        # self.num_moves_norm = torch.nn.BatchNorm1d(1)
+        # self.rew_norm = torch.nn.BatchNorm1d(1)
 
     def add(self, example: Memory):
         self.buffer.append(example)
@@ -245,18 +248,29 @@ class ExperienceBuffer:
         def scalar_prep(x):
             return torch.tensor(x).unsqueeze(-1).float()
 
-        predicted_reward = scalar_prep([m.predicted_reward for m in mems])
+        rew = scalar_prep([m.rew for m in mems])
         num_moves = scalar_prep([m.num_moves for m in mems])
-        this_turn_poss = scalar_prep([m.this_turn_poss for m in mems])
+        poss_this_turn = scalar_prep([m.poss_this_turn for m in mems])
         gen_poss = scalar_prep([m.gen_poss for m in mems])
+        # num_moves = num_moves.unsqueeze(1)
+        # num_moves = self.num_moves_norm(num_moves) # doesn't help
+        # num_moves = num_moves.squeeze(1)
+        # label_dict = {
+        #     "gen_poss": gen_poss,
+        #     "poss_this_turn": poss_this_turn,
+        #     "midpoint": midpoint,
+        #     "acts": acts,
+        #     "num_moves": num_moves,
+        #     "rew": rew,
+        # }
         labels = BrainOut(
             {
                 "gen_poss": gen_poss,
-                "poss_this_turn": this_turn_poss,
+                "poss_this_turn": poss_this_turn,
                 "midpoint": midpoint,
                 "acts": acts,
                 "num_moves": num_moves,
-                "rew": predicted_reward,
+                "rew": rew,
             }
         )
         return ins, labels

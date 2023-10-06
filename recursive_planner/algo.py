@@ -16,6 +16,7 @@ class RP:
 
     def play(self):
         self.random_bootstrap()
+        return
         obs, info = self.env.reset()
         state = State(obs=obs)
 
@@ -36,8 +37,14 @@ class RP:
 
         for _ in range(5_000):
             start = np.random.randint(0, random_play_len - max_sample_length)
-            end = start + np.random.randint(1, max_sample_length)
-            self.notes.add(Memory(State()).rand_start(buffer, start, end))
+            end = start + min(
+                np.random.randint(1, max_sample_length),
+                np.random.randint(1, max_sample_length),
+                np.random.randint(1, max_sample_length),
+                np.random.randint(1, max_sample_length),
+            )
+            mem = Memory(State()).rand_start(buffer, start, end)
+            self.notes.add(mem)
 
         self.train()
 
@@ -46,10 +53,10 @@ class RP:
         state: State,
     ) -> Memory:
         arg_state = copy.copy(state)  # to see how close we got!
-        print(state.possible_this_turn)
+        print(state.poss_this_turn)
         state.optimize_subplan(self.net)
-        print(state.possible_this_turn)
-        if state.possible_this_turn >= 0.2:
+        print(state.poss_this_turn)
+        if state.poss_this_turn >= 0.2:
             action_sequence = state.get_action_sequence()
             queue = StateQueue()
             for action in action_sequence[0]:  # not parallel
@@ -83,7 +90,7 @@ class RP:
             plan_record.gen_poss = (
                 1
                 if check_state.num_moves < 3
-                or arg_state.predicted_reward - plan_record.predicted_reward <= 3
+                or arg_state.rew - plan_record.predicted_reward <= 3
                 else 0
             )
             self.notes.add(plan_record)
@@ -91,7 +98,7 @@ class RP:
 
     def train(self):
         optimizer = torch.optim.Adam(self.net.parameters())
-        pbar = trange(200)
+        pbar = trange(800)
         loss_sma = SMA(10)
         for i in pbar:
             ins, labels = self.notes.sample_preprocess(self.net, 10)
@@ -113,23 +120,24 @@ class RP:
         def categorical_only(l: BrainOut):
             return l.acts
 
-        def list_mean(l):
+        def list_mean(l: list[torch.Tensor]) -> torch.Tensor:
             return sum(l) / len(l)
 
         labels.replace_if_none(outputs)
-        # labels = [l if l is not None else o for l, o in zip(labels, outputs)]
         scalar_x = scalar_only(outputs)
         scalar_y = scalar_only(labels)
-        scalar_loss = list_mean(
-            [
-                torch.nn.functional.mse_loss(x, y).mean()
-                for x, y in zip(scalar_x, scalar_y)
-            ]
-        )
+        print(outputs.num_moves, labels.num_moves)
+        scalar_losses = [
+            torch.nn.functional.mse_loss(x, y).mean()
+            for x, y in zip(scalar_x, scalar_y)
+        ]
+        # [print(x.item()) for x in scalar_losses]
+        scalar_loss = list_mean(scalar_losses)
         vect_x = vect_only(outputs)
         vect_y = vect_only(labels)
         vect_loss = torch.nn.functional.cosine_similarity(vect_x, vect_y).mean()
         cat_x = categorical_only(outputs)
         cat_y = categorical_only(labels)
         cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y).mean()
+        print(scalar_loss.item(), vect_loss.item(), cat_loss.item())
         return list_mean([scalar_loss, vect_loss, cat_loss]).float()

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
+from typing_extensions import Self
 
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
@@ -84,7 +85,7 @@ class Action(nn.Module):
         self.unfold = nn.LSTM(1, 16, batch_first=True)
         self.encoder_h = Vects2_16()
         self.encoder_c = Vects2_16()
-        self.action_decoder = nn.Linear(16, 36)
+        self.action_decoder = nn.Linear(16, 37)
 
     def forward(self, vects: torch.Tensor):
         batch = vects.shape[0]
@@ -93,7 +94,7 @@ class Action(nn.Module):
         inputs = torch.ones(batch, 10, 1)
         acts, (h, c) = self.unfold(inputs, (h, c))
         acts = self.action_decoder(acts)
-        acts = acts.view(batch, 36, 10)
+        acts = acts.view(batch, 37, 10)
         return acts
 
 
@@ -127,7 +128,8 @@ class Brain(nn.Module):
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
-        vects = self.trunk(seen)
+        vects = seen
+        # vects = self.trunk(seen) # doesn't help with loss
         rets = {
             "gen_poss": self.generally_possibe(vects),
             "poss_this_turn": self.possibe_this_turn(vects),
@@ -163,7 +165,7 @@ class BrainOut:
         )
 
     # slightly cursed copilot code
-    def replace_if_none(self, other: BrainOut):
+    def replace_if_none(self, other: Self):
         for k, v in self.__dict__.items():
             if v is None:
                 self.__dict__[k] = other.__dict__[k]

@@ -13,7 +13,7 @@ def test_brain_batchless():
     assert outs.poss_this_turn.shape == torch.Size([1])
     assert outs.midpoint.shape == torch.Size([16])
     assert outs.num_moves.shape == torch.Size([1])
-    assert outs.acts.shape == torch.Size([36, 10])
+    assert outs.acts.shape == torch.Size([37, 10])
     assert outs.rew.shape == torch.Size([1])
 
 
@@ -27,7 +27,7 @@ def test_brain_1_batch():
     assert outs.poss_this_turn.shape == torch.Size([1])
     assert outs.midpoint.shape == torch.Size([16])
     assert outs.num_moves.shape == torch.Size([1])
-    assert outs.acts.shape == torch.Size([36, 10])
+    assert outs.acts.shape == torch.Size([37, 10])
     assert outs.rew.shape == torch.Size([1])
 
 
@@ -41,7 +41,7 @@ def test_brain_10_batch():
     assert outs.poss_this_turn.shape == torch.Size([10, 1])
     assert outs.midpoint.shape == torch.Size([10, 16])
     assert outs.num_moves.shape == torch.Size([10, 1])
-    assert outs.acts.shape == torch.Size([10, 36, 10])
+    assert outs.acts.shape == torch.Size([10, 37, 10])
     assert outs.rew.shape == torch.Size([10, 1])
 
 
