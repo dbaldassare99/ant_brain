@@ -1,6 +1,21 @@
+its not training because...
+it's guessing 0.5 loss for eveythng
+- action inputs are vague (multple classes to one acton, how could you learn it)
+   - 7 long, 6 is eos token
+- my lstm thing literally doesn't work (wouldn't be suprised lol :( ))
+   - seems to not just guess 1 thing with random stuff.
+- vision is training while everything else is training? and vision make the ins too?
+   - freeze vision for 2nd half - nothin...
+- batch size too small...
+   - nope now it's perfectly pinned to .5 lol
+- all the relus are too harsh 
+   -  sigmoid?
+
+
 gen_poss
 poss_this_turn
 midpoint
 acts
 num_moves
 rew
+

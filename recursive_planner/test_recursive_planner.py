@@ -13,7 +13,7 @@ def test_brain_batchless():
     assert outs.poss_this_turn.shape == torch.Size([1])
     assert outs.midpoint.shape == torch.Size([16])
     assert outs.num_moves.shape == torch.Size([1])
-    assert outs.acts.shape == torch.Size([37, 10])
+    assert outs.acts.shape == torch.Size([7, 10])
     assert outs.rew.shape == torch.Size([1])
 
 
@@ -27,7 +27,7 @@ def test_brain_1_batch():
     assert outs.poss_this_turn.shape == torch.Size([1, 1])
     assert outs.midpoint.shape == torch.Size([1, 16])
     assert outs.num_moves.shape == torch.Size([1, 1])
-    assert outs.acts.shape == torch.Size([1, 37, 10])
+    assert outs.acts.shape == torch.Size([1, 7, 10])
     assert outs.rew.shape == torch.Size([1, 1])
 
 
@@ -41,7 +41,7 @@ def test_brain_10_batch():
     assert outs.poss_this_turn.shape == torch.Size([10, 1])
     assert outs.midpoint.shape == torch.Size([10, 16])
     assert outs.num_moves.shape == torch.Size([10, 1])
-    assert outs.acts.shape == torch.Size([10, 37, 10])
+    assert outs.acts.shape == torch.Size([10, 7, 10])
     assert outs.rew.shape == torch.Size([10, 1])
 
 
@@ -71,11 +71,13 @@ def test_get_action_sequence():
     state.obs = torch.randn(224, 240, 3)
     state.update(brain)
     action_sequence = state.get_action_sequence()
-    assert action_sequence[0].shape == torch.Size([10])
+    print(action_sequence)
+    assert len(action_sequence[0]) <= 10
 
 
 if __name__ == "__main__":
     test_brain_1_batch()
     test_brain_10_batch()
-    test_optimize_subplan()
-    test_optimize_plan()
+    # test_optimize_subplan()
+    # test_optimize_plan()
+    test_get_action_sequence()

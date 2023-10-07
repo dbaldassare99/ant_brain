@@ -4,18 +4,18 @@ from nets import Brain, BrainOut
 from tqdm import trange
 import numpy as np
 import torch
-from buffer import ExperienceBuffer, State, StateQueue, Memory, Timestep, SMA
+from buffer import ExperienceBuffer, State, StateQueue, Memory, Timestep, SMA, TorchGym
 import copy
 
 
 class RP:
-    def __init__(self, env) -> None:
+    def __init__(self, env: TorchGym) -> None:
         self.env = env
         self.net = Brain().float()
         self.notes = ExperienceBuffer()
 
     def play(self):
-        # self.random_bootstrap()
+        self.random_bootstrap()
         obs, info = self.env.reset()
         state = State(obs=obs)
 
@@ -27,16 +27,19 @@ class RP:
     def random_bootstrap(self) -> None:
         buffer = []
         _ = self.env.reset()
-        random_play_len = 1_000
+        random_play_len = 800
         max_sample_length = 100
         assert max_sample_length < random_play_len
-        for _ in range(random_play_len):
-            action = self.env.action_space.sample()
+        for i in range(random_play_len):
+            if i % 10 == 0:
+                action = self.env.rand_act()
             buffer.append(Timestep(*self.env.step(action), action))
 
-        for _ in range(5_000):
+        for _ in range(50):
             start = np.random.randint(0, random_play_len - max_sample_length)
+            # end = start + np.random.randint(1, max_sample_length)
             end = start + min(
+                np.random.randint(1, max_sample_length),
                 np.random.randint(1, max_sample_length),
                 np.random.randint(1, max_sample_length),
                 np.random.randint(1, max_sample_length),
@@ -46,6 +49,7 @@ class RP:
             self.notes.add(mem)
 
         self.train()
+        self.notes = ExperienceBuffer()
 
     def recursive_actor(
         self,
@@ -53,11 +57,7 @@ class RP:
     ) -> Memory:
         self.net.eval()
         arg_state = copy.copy(state)  # to see how close we got!
-        # print(state.poss_this_turn)
         state.optimize_subplan(self.net)
-        # print(state.poss_this_turn)
-        # print(state.gen_poss)
-        # print(state.poss_this_turn)
         if state.poss_this_turn >= 0.5:
             action_sequence = state.get_action_sequence()
             print(action_sequence)
@@ -102,17 +102,17 @@ class RP:
     def train(self):
         self.net.train()
         optimizer = torch.optim.Adam(self.net.parameters())
-        pbar = trange(200)
+        pbar = trange(400)
         loss_sma = SMA(10)
         for i in pbar:
-            ins, labels = self.notes.sample_preprocess(self.net, 10)
+            ins, labels = self.notes.sample_preprocess_and_batch(self.net, 10)
             optimizer.zero_grad()
             outputs = BrainOut(self.net(*ins))
-            loss = self.loss_fn(outputs, labels)
-            loss_sma.add(loss.item())
-            pbar.set_postfix_str(f"loss: {loss_sma.mean():.2f}")
+            loss, (scalar, vect, cat) = self.loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()
+            loss_sma.add(loss.item())
+            pbar.set_postfix_str(f"losses: {scalar:.2f} {vect:.2f} {cat:.2f}")
 
     def loss_fn(self, outputs: BrainOut, labels: BrainOut):
         def scalar_only(l: BrainOut):
@@ -127,21 +127,47 @@ class RP:
         def list_mean(l: list[torch.Tensor]) -> torch.Tensor:
             return sum(l) / len(l)
 
-        labels.replace_if_none(outputs)
+        # labels.replace_if_none(outputs)
+        labels.gen_poss = outputs.gen_poss
+        labels.poss_this_turn = outputs.poss_this_turn
+        labels.midpoint = outputs.midpoint
+        labels.acts = outputs.acts
+        labels.num_moves = outputs.num_moves
+        # labels.rew = outputs.rew
+
         scalar_x = scalar_only(outputs)
         scalar_y = scalar_only(labels)
-        # print(outputs.num_moves, labels.num_moves)
         scalar_losses = [
             torch.nn.functional.mse_loss(x, y).mean()
             for x, y in zip(scalar_x, scalar_y)
         ]
-        # [print(x.item()) for x in scalar_losses]
         scalar_loss = list_mean(scalar_losses)
         vect_x = vect_only(outputs)
         vect_y = vect_only(labels)
         vect_loss = torch.nn.functional.cosine_similarity(vect_x, vect_y).mean()
         cat_x = categorical_only(outputs)
         cat_y = categorical_only(labels)
+        # print(torch.argmax(cat_x, dim=1))
+        # print(torch.argmax(cat_y, dim=1))
+        # print(torch.argmax(vect_x, dim=1))
+        # print(torch.argmax(vect_y, dim=1))
+        # print(vect_x)
+        # print(vect_y)
+        # for xs, ys in zip(scalar_x, scalar_y):
+        #     example = torch.stack([xs, ys], dim=1).squeeze()
+        #     print(example)
         cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y).mean()
-        # print(scalar_loss.item(), vect_loss.item(), cat_loss.item())
-        return list_mean([scalar_loss, vect_loss, cat_loss]).float()
+
+        print(torch.stack([outputs.rew, labels.rew], dim=1).squeeze())
+        rew_loss = torch.nn.functional.mse_loss(outputs.rew, labels.rew)
+        print(rew_loss.shape)
+        return rew_loss, (
+            scalar_loss.item(),
+            vect_loss.item(),
+            cat_loss.item(),
+        )
+        # return list_mean([scalar_loss, vect_loss, cat_loss]).float(), (
+        #     scalar_loss.item(),
+        #     vect_loss.item(),
+        #     cat_loss.item(),
+        # )

@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from typing_extensions import Self
+from positional_encodings.torch_encodings import PositionalEncoding1D, Summer
 
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
@@ -13,22 +14,26 @@ class Vision(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=16, stride=6),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Sigmoid(),
             nn.Conv2d(16, 16, kernel_size=8, stride=3),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Sigmoid(),
             nn.Conv2d(16, 16, kernel_size=4, stride=2),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Sigmoid(),
             nn.Conv2d(16, 16, kernel_size=4, stride=2),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Sigmoid(),
             nn.Flatten(),
-            nn.BatchNorm1d(16),
+            # nn.BatchNorm1d(16),
         )
         self.norm = transforms.Normalize(
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
         )
 
     def forward(self, obs):
-        obs = self.norm(obs)
+        # obs = self.norm(obs)
         vect = self.model(obs)
         return vect
 
@@ -43,10 +48,11 @@ class Trunk(nn.Module):
             dim_feedforward=32,
             batch_first=True,
         )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
-        self.attn = transformer_encoder
+        self.attn = nn.TransformerEncoder(encoder_layer, num_layers=6)
+        self.pos_enc = Summer(PositionalEncoding1D(16))
 
     def forward(self, seen):
+        seen = self.pos_enc(seen)
         return self.attn(seen)
 
 
@@ -55,7 +61,8 @@ class Vect2Scalar(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(48, 16),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Sigmoid(),
             nn.Linear(16, 1),
         )
 
@@ -83,20 +90,49 @@ class Vects2_16(nn.Module):
 class Action(nn.Module):
     def __init__(self):
         super().__init__()
-        self.unfold = nn.LSTM(1, 16, batch_first=True)
-        self.encoder_h = Vects2_16()
-        self.encoder_c = Vects2_16()
-        self.action_decoder = nn.Linear(16, 37)
+        # self.unfold = nn.LSTM(1, 16, batch_first=True)
+        # self.encoder_h = Vects2_16()
+        # self.encoder_c = Vects2_16()
+        # self.action_decoder = nn.Linear(16, 37)
+
+        # 48 + 37 + 1 = 85
+        # self.unfold = nn.Linear(85, 37)
+        self.nets = [nn.Linear(48, 7) for _ in range(10)]
+        self.pre_nets = nn.Sequential(
+            nn.Linear(48, 48),
+            nn.ReLU(),
+            nn.Linear(48, 48),
+            nn.ReLU(),
+            nn.Linear(48, 48),
+            nn.ReLU(),
+        )
 
     def forward(self, vects: torch.Tensor):
+        # batch = vects.shape[0]
+        # vects = vects.view(batch, 48)
+        # ins = torch.ones(batch, 37)
+        # outs = torch.zeros(batch, 37, 10)
+        # for i in range(10):
+        #     ins = torch.cat([ins, vects], dim=1)
+        #     ins = self.unfold(ins)
+        #     ins = torch.nn.functional.softmax(ins, dim=1)
+        #     outs[:, :, i] = ins
+        # return outs
+
+        # batch = vects.shape[0]
+        # h = self.encoder_h(vects).unsqueeze(0)
+        # c = self.encoder_c(vects).unsqueeze(0)
+        # inputs = torch.ones(batch, 10, 1)
+        # acts, (h, c) = self.unfold(inputs, (h, c))
+        # acts = self.action_decoder(acts)
+        # acts = acts.view(batch, 37, 10)
+        # return acts
+
         batch = vects.shape[0]
-        h = self.encoder_h(vects).unsqueeze(0)
-        c = self.encoder_c(vects).unsqueeze(0)
-        inputs = torch.ones(batch, 10, 1)
-        acts, (h, c) = self.unfold(inputs, (h, c))
-        acts = self.action_decoder(acts)
-        acts = acts.view(batch, 37, 10)
-        return acts
+        vects = vects.view(batch, 48)
+        # vects = self.pre_nets(vects)
+        acts = [layer(vects) for layer in self.nets]
+        return torch.stack(acts, dim=2)
 
 
 class Brain(nn.Module):
@@ -130,7 +166,7 @@ class Brain(nn.Module):
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
         vects = seen
-        # vects = self.trunk(seen) # doesn't help with loss
+        # vects = self.trunk(seen)  # doesn't help with loss
         rets = {
             "gen_poss": F.sigmoid(self.generally_possibe(vects)),
             "poss_this_turn": F.sigmoid(self.possibe_this_turn(vects)),
@@ -152,7 +188,7 @@ class BrainOut:
         self.acts = outs["acts"]
         self.num_moves = outs["num_moves"]
         self.rew = outs["rew"]
-        self.scalar_normalizer = Normalizer(4)
+        # self.scalar_normalizer = Normalizer(4)
 
     def __iter__(self):
         return iter(
@@ -172,38 +208,39 @@ class BrainOut:
             if v is None:
                 self.__dict__[k] = other.__dict__[k]
 
-    def norm_scalars(self):
-        normalized = torch.stack(
-            [self.gen_poss, self.poss_this_turn, self.num_moves, self.rew]
-        ).view(4)
-        normalized = self.scalar_normalizer(normalized)
-        (
-            self.gen_poss,
-            self.poss_this_turn,
-            self.num_moves,
-            self.rew,
-        ) = normalized.split(1)
+
+#     def norm_scalars(self):
+#         normalized = torch.stack(
+#             [self.gen_poss, self.poss_this_turn, self.num_moves, self.rew]
+#         ).view(4)
+#         normalized = self.scalar_normalizer(normalized)
+#         (
+#             self.gen_poss,
+#             self.poss_this_turn,
+#             self.num_moves,
+#             self.rew,
+#         ) = normalized.split(1)
 
 
-class Normalizer:
-    def __init__(self, channels: int, maxlen: int = 1_000):
-        self.maxlen = maxlen
-        self.channels = channels
-        self.q = torch.zeros(maxlen, channels)
-        self.idx = 0
+# class Normalizer:
+#     def __init__(self, channels: int, maxlen: int = 1_000):
+#         self.maxlen = maxlen
+#         self.channels = channels
+#         self.q = torch.zeros(maxlen, channels)
+#         self.idx = 0
 
-    def __call__(self, vector: torch.Tensor):
-        self.add(vector)
-        return (vector - self.mean()) / self.std() + 0.5
+#     def __call__(self, vector: torch.Tensor):
+#         self.add(vector)
+#         return (vector - self.mean()) / self.std() + 0.5
 
-    def add(self, item: torch.Tensor):
-        self.q[self.idx] = item
-        self.idx += 1
-        if self.idx >= self.maxlen:
-            self.idx = 0
+#     def add(self, item: torch.Tensor):
+#         self.q[self.idx] = item
+#         self.idx += 1
+#         if self.idx >= self.maxlen:
+#             self.idx = 0
 
-    def mean(self):
-        return self.q.mean(dim=0)
+#     def mean(self):
+#         return self.q.mean(dim=0)
 
-    def std(self):
-        return self.q.std(dim=0)
+#     def std(self):
+#         return self.q.std(dim=0)

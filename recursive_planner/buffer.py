@@ -33,7 +33,7 @@ class SMA:
 @dataclass
 class Timestep:
     obs: np.ndarray
-    reward: float
+    rew: float
     terminated: bool
     truncated: bool
     info: dict
@@ -86,10 +86,11 @@ class State:
         self.lr = 0.5
 
     def get_action_sequence(self) -> list:
-        if len(self.acts.shape) < 3:  # if unbatched
-            acts = self.acts.unsqueeze(0)
+        acts = self.acts
+        if len(acts.shape) < 3:  # if unbatched
+            acts = acts.unsqueeze(0)
         acts = torch.argmax(acts, dim=1)
-        indices = torch.where(acts == 36, acts, 0.0)
+        indices = torch.where(acts == 6, acts, 0.0)
         indices = indices.nonzero()
         action_list = [*torch.split(acts, 1)]
         action_list = [a.squeeze() for a in action_list]
@@ -105,28 +106,29 @@ class State:
     def optimize_subplan(
         self,
         net: Brain,
-        steps: int = 100,
+        steps: int = 200,
     ):
         def subplan_optim_loss(xs):
             outs = BrainOut(xs)
             # outs.norm_scalars()
-            return outs.poss_this_turn  # + outs.rew  # - outs.num_moves
+            return outs.poss_this_turn + outs.rew - outs.num_moves
 
         self.noise = torch.randn_like(self.noise)
         self.update(net)
-        # print(self.poss_this_turn)
         net = net.eval()
         jacobian = jacrev(lambda x, y, z: subplan_optim_loss(net(x, y, z)), 2)
         before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
-        for _ in trange(steps, desc=f"subplan_optim"):
+        pbar = trange(steps, desc=f"subplan_optim")
+        for i in pbar:
             grad = jacobian(self.obs, self.goal, self.noise)
             grad = grad.squeeze(0)
             self.noise = self.noise + grad * self.lr
+            self.update(net)
+            pbar.set_postfix_str(
+                f"poss_this_turn: {self.poss_this_turn.item():.2f} | rew: {self.rew.item():.2f}"
+            )
         after = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         self.update(net)
-        # print(self.poss_this_turn)
-        print(before, after)
-        print(after - before)
         return before, after
 
     # no batch!
@@ -143,7 +145,7 @@ class State:
         def full_plan_loss(xs):
             outs = BrainOut(xs)
             # outs.norm_scalars()
-            return outs.gen_poss + outs.rew  # - outs.num_moves
+            return outs.gen_poss + outs.rew - outs.num_moves
 
         self.noise = torch.randn_like(self.noise)
         self.goal = torch.randn_like(self.goal)
@@ -154,15 +156,17 @@ class State:
         self.update(net)
         pbar = trange(steps, desc=f"plan_optim")
         for i in pbar:
-            if self.gen_poss > 0.5:
-                grads = full_opt(self.obs, self.goal, self.noise)
-            else:
-                grads = gen_poss_grad(self.obs, self.goal, self.noise)
+            # if self.gen_poss > 0.5:
+            grads = full_opt(self.obs, self.goal, self.noise)
+            # else:
+            # grads = gen_poss_grad(self.obs, self.goal, self.noise)
             grads = [g.squeeze(0) for g in grads]
             self.goal = self.goal + grads[0] * self.lr
             self.noise = self.noise + grads[1] * self.lr
             self.update(net)
-            pbar.set_postfix_str(f"gen_poss: {self.gen_poss.item():.2f}")
+            pbar.set_postfix_str(
+                f"gen_poss: {self.gen_poss.item():.2f} | rew: {self.rew.item():.2f}"
+            )
         after = gen_poss_loss(net(self.obs, self.goal, self.noise))
         return before, after
 
@@ -230,10 +234,10 @@ class Memory:
         self.goal = buffer[end].obs
         self.midpoint = buffer[(start + end) // 2].obs
         self.num_moves = end - start
-        self.rew = sum([r.reward for r in buffer[start:end]])
+        self.rew = sum([r.rew for r in buffer[start:end]])
         self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
         if self.num_moves < 10:
-            self.acts[self.num_moves] = 36
+            self.acts[self.num_moves] = 6
         self.noise = None
         self.gen_poss = 1 if self.num_moves <= 50 else 0
         self.poss_this_turn = 1 if self.num_moves <= 10 else 0
@@ -243,16 +247,18 @@ class Memory:
 class ExperienceBuffer:
     def __init__(self) -> None:
         self.buffer: List[Memory] = []
-        # self.num_moves_norm = torch.nn.BatchNorm1d(1)
-        # self.rew_norm = torch.nn.BatchNorm1d(1)
+        self.num_moves_norm = torch.nn.BatchNorm1d(1)
+        self.rew_norm = torch.nn.BatchNorm1d(1)
 
     def add(self, example: Memory):
         self.buffer.append(example)
 
-    def sample_preprocess(self, net: Brain, batch_size: int):
-        mems = [
-            self.buffer[i] for i in np.random.randint(0, len(self.buffer), batch_size)
-        ]
+    def sample_preprocess_and_batch(self, net: Brain, batch_size: int):
+        start = len(self.buffer) - batch_size
+        start = np.random.randint(0, start)
+        idxs = np.arange(start, start + batch_size)
+        mems = [self.buffer[i] for i in idxs]
+
         obs = torch.stack([m.obs for m in mems]).float()
         goal = torch.stack([m.goal for m in mems]).float()
         if len(goal[0].shape) > 2:
@@ -273,8 +279,12 @@ class ExperienceBuffer:
         poss_this_turn = scalar_prep([m.poss_this_turn for m in mems])
         gen_poss = scalar_prep([m.gen_poss for m in mems])
         # num_moves = num_moves.unsqueeze(1)
-        # num_moves = self.num_moves_norm(num_moves) # doesn't help
+        # num_moves = self.num_moves_norm(num_moves)
         # num_moves = num_moves.squeeze(1)
+        # rew = rew.unsqueeze(1)
+        # rew = self.rew_norm(rew)
+        # rew = rew.squeeze(1)
+
         # label_dict = {
         #     "gen_poss": gen_poss,
         #     "poss_this_turn": poss_this_turn,
@@ -301,8 +311,22 @@ class TorchGym:
         self.gym = gym
         self.action_space = gym.action_space
 
+    def rand_act(self):
+        return np.random.randint(0, 6)
+
     # gymnasium.Env.step(self, action: ActType) → tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]
     def step(self, action):
+        action_dict = {
+            0: 16,  # noop
+            1: 3,  # left
+            2: 7,  # right
+            3: 18,  # jump
+            4: 21,  # jump left
+            5: 25,  # jump right
+        }
+        if isinstance(action, torch.Tensor):
+            action = action.item()
+        action = action_dict[action]
         ret = self.gym.step(action)
         obs = torch.tensor(ret[0]).float()
         rew = torch.tensor(ret[1]).float()
