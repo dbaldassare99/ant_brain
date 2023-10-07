@@ -5,13 +5,7 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import trange
 from typing import List
-
-# class Buffer:
-#     def __init__(self) -> None:
-#         self.buffer = []
-
-#     def add(self, example):
-#         self.buffer.append(example)
+import matplotlib.pyplot as plt
 
 
 class SMA:
@@ -224,14 +218,10 @@ class Memory:
         # we could say no... because we're alrealy < 95% this turn poss to get here
         self.poss_this_turn = None
 
-    # def add(self, memory: Memory) -> None: # maybe need this later?
-    #     self.num_moves += memory.num_moves
-    #     self.predicted_reward += memory.reward
-    #     self.goal = memory.goal
-
     def rand_start(self, buffer: list[Timestep], start: int, end: int):
         self.obs = buffer[start].obs
         self.goal = buffer[end].obs
+
         self.midpoint = buffer[(start + end) // 2].obs
         self.num_moves = end - start
         self.rew = sum([r.rew for r in buffer[start:end]])
@@ -253,17 +243,26 @@ class ExperienceBuffer:
     def add(self, example: Memory):
         self.buffer.append(example)
 
-    def sample_preprocess_and_batch(self, net: Brain, batch_size: int):
-        start = len(self.buffer) - batch_size
-        start = np.random.randint(0, start)
-        idxs = np.arange(start, start + batch_size)
-        mems = [self.buffer[i] for i in idxs]
+    def sample_preprocess_and_batch(
+        self, net: Brain, batch_size: int, print: bool = False
+    ):
+        # start = len(self.buffer) - batch_size
+        # start = np.random.randint(0, start)
+        # idxs = np.arange(start, start + batch_size)
+        # mems = [self.buffer[i] for i in idxs]
 
+        mems = np.random.choice(self.buffer, batch_size)
         obs = torch.stack([m.obs for m in mems]).float()
         goal = torch.stack([m.goal for m in mems]).float()
+        if print:
+            fig, axes = plt.subplots(2, batch_size, figsize=(30, 7))
+            for i in range(batch_size):
+                axes[0, i].imshow(obs[i].int())
+                axes[1, i].imshow(goal[i].int())
+
         if len(goal[0].shape) > 2:
             goal = net.vision(net.preprocess_frame(goal))
-        noise = torch.rand_like(goal).float()
+        noise = torch.ones_like(goal).float()
         ins = (obs, goal, noise)
 
         midpoint = torch.stack([m.midpoint for m in mems])
@@ -285,14 +284,26 @@ class ExperienceBuffer:
         # rew = self.rew_norm(rew)
         # rew = rew.squeeze(1)
 
-        # label_dict = {
-        #     "gen_poss": gen_poss,
-        #     "poss_this_turn": poss_this_turn,
-        #     "midpoint": midpoint,
-        #     "acts": acts,
-        #     "num_moves": num_moves,
-        #     "rew": rew,
-        # }
+        if print:
+            label_dict = {
+                "gen_poss": gen_poss,
+                "poss_this_turn": poss_this_turn,
+                "midpoint": midpoint,
+                "acts": acts,
+                "num_moves": num_moves,
+                "rew": rew,
+            }
+            for ax, i in zip(axes[0], range(batch_size)):
+                infos = [
+                    f"{k}: {v[i].item():.2f}"
+                    for k, v in label_dict.items()
+                    if k != "acts" and k != "midpoint"
+                ]
+                infos = str.join("\n", infos)
+                ax.set_title(infos)
+            fig.tight_layout()
+            plt.savefig("test.png")
+
         labels = BrainOut(
             {
                 "gen_poss": gen_poss,

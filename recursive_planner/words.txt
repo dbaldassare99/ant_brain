@@ -10,7 +10,11 @@ it's guessing 0.5 loss for eveythng
    - nope now it's perfectly pinned to .5 lol
 - all the relus are too harsh 
    -  sigmoid?
+learning rate was maybe too high?
+Seems to be learning with 10x slower lr 
 
+The examples seem to be always in the same order...
+So maybe it's not getting a truly random sample of the data?
 
 gen_poss
 poss_this_turn
@@ -18,4 +22,3 @@ midpoint
 acts
 num_moves
 rew
-

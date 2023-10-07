@@ -31,11 +31,11 @@ class RP:
         max_sample_length = 100
         assert max_sample_length < random_play_len
         for i in range(random_play_len):
-            if i % 10 == 0:
+            if i % 20 == 0:
                 action = self.env.rand_act()
             buffer.append(Timestep(*self.env.step(action), action))
 
-        for _ in range(50):
+        for _ in range(5):
             start = np.random.randint(0, random_play_len - max_sample_length)
             # end = start + np.random.randint(1, max_sample_length)
             end = start + min(
@@ -101,14 +101,15 @@ class RP:
 
     def train(self):
         self.net.train()
-        optimizer = torch.optim.Adam(self.net.parameters())
-        pbar = trange(400)
+        optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-4)
+        pbar = trange(40_000)
         loss_sma = SMA(10)
         for i in pbar:
-            ins, labels = self.notes.sample_preprocess_and_batch(self.net, 10)
             optimizer.zero_grad()
+            ins, labels = self.notes.sample_preprocess_and_batch(self.net, 3)
             outputs = BrainOut(self.net(*ins))
             loss, (scalar, vect, cat) = self.loss_fn(outputs, labels)
+            print(loss)
             loss.backward()
             optimizer.step()
             loss_sma.add(loss.item())
@@ -159,8 +160,7 @@ class RP:
         cat_loss = torch.nn.functional.cross_entropy(cat_x, cat_y).mean()
 
         print(torch.stack([outputs.rew, labels.rew], dim=1).squeeze())
-        rew_loss = torch.nn.functional.mse_loss(outputs.rew, labels.rew)
-        print(rew_loss.shape)
+        rew_loss = torch.nn.functional.l1_loss(outputs.rew, labels.rew)
         return rew_loss, (
             scalar_loss.item(),
             vect_loss.item(),

@@ -6,35 +6,34 @@ from torchvision import transforms
 from typing_extensions import Self
 from positional_encodings.torch_encodings import PositionalEncoding1D, Summer
 
+VECT_LEN = 32
+
 
 # convolutional network that takes in a frame of shape (224, 240, 3)
 # and outputs a vector of shape (1, 16)
 class Vision(nn.Module):
     def __init__(self):
         super().__init__()
-        self.model = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=16, stride=6),
-            # nn.ReLU(),
-            nn.Sigmoid(),
-            nn.Conv2d(16, 16, kernel_size=8, stride=3),
-            # nn.ReLU(),
-            nn.Sigmoid(),
-            nn.Conv2d(16, 16, kernel_size=4, stride=2),
-            # nn.ReLU(),
-            nn.Sigmoid(),
-            nn.Conv2d(16, 16, kernel_size=4, stride=2),
-            # nn.ReLU(),
-            nn.Sigmoid(),
+        self.cnn = nn.Sequential(
+            nn.MaxPool2d(2),
+            nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
             nn.Flatten(),
-            # nn.BatchNorm1d(16),
+            nn.Linear(7040, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, VECT_LEN),
         )
         self.norm = transforms.Normalize(
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
         )
 
     def forward(self, obs):
-        # obs = self.norm(obs)
-        vect = self.model(obs)
+        obs = self.norm(obs)
+        vect = self.cnn(obs)
         return vect
 
 
@@ -43,13 +42,13 @@ class Trunk(nn.Module):
     def __init__(self):
         super().__init__()
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=16,
+            d_model=VECT_LEN,
             nhead=8,
-            dim_feedforward=32,
+            dim_feedforward=VECT_LEN * 2,
             batch_first=True,
         )
         self.attn = nn.TransformerEncoder(encoder_layer, num_layers=6)
-        self.pos_enc = Summer(PositionalEncoding1D(16))
+        self.pos_enc = Summer(PositionalEncoding1D(VECT_LEN))
 
     def forward(self, seen):
         seen = self.pos_enc(seen)
@@ -60,15 +59,14 @@ class Vect2Scalar(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(48, 16),
-            # nn.ReLU(),
-            nn.Sigmoid(),
+            nn.Linear(VECT_LEN * 3, 16),
+            nn.ReLU(),
             nn.Linear(16, 1),
         )
 
     def forward(self, vects):
         batch = vects.shape[0]
-        concatted = vects.view(batch, 48)
+        concatted = vects.view(batch, VECT_LEN * 3)
         return self.model(concatted)
 
 
@@ -76,14 +74,14 @@ class Vects2_16(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(48, 24),
+            nn.Linear(VECT_LEN * 3, 24),
             nn.ReLU(),
             nn.Linear(24, 16),
         )
 
     def forward(self, vects) -> torch.Tensor:
         batch = vects.shape[0]
-        concatted = vects.view(batch, 48)
+        concatted = vects.view(batch, VECT_LEN * 3)
         return self.model(concatted)
 
 
@@ -97,7 +95,7 @@ class Action(nn.Module):
 
         # 48 + 37 + 1 = 85
         # self.unfold = nn.Linear(85, 37)
-        self.nets = [nn.Linear(48, 7) for _ in range(10)]
+        self.nets = [nn.Linear(VECT_LEN * 3, 7) for _ in range(10)]
         self.pre_nets = nn.Sequential(
             nn.Linear(48, 48),
             nn.ReLU(),
@@ -129,7 +127,7 @@ class Action(nn.Module):
         # return acts
 
         batch = vects.shape[0]
-        vects = vects.view(batch, 48)
+        vects = vects.view(batch, VECT_LEN * 3)
         # vects = self.pre_nets(vects)
         acts = [layer(vects) for layer in self.nets]
         return torch.stack(acts, dim=2)
@@ -166,7 +164,7 @@ class Brain(nn.Module):
         seen = torch.stack(seen, dim=1)
         seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
         vects = seen
-        # vects = self.trunk(seen)  # doesn't help with loss
+        vects = self.trunk(seen)  # doesn't help with loss
         rets = {
             "gen_poss": F.sigmoid(self.generally_possibe(vects)),
             "poss_this_turn": F.sigmoid(self.possibe_this_turn(vects)),
