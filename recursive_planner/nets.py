@@ -61,33 +61,37 @@ class Vect2Scalar(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(VECT_LEN * 3, 16),
+            nn.Linear(VECT_LEN * 3, 32),
             ACTIVATION(),
-            nn.Linear(16, 1),
+            nn.Linear(32, 32),
+            ACTIVATION(),
+            nn.Linear(32, 1),
         )
 
     def forward(self, vects):
         batch = vects.shape[0]
-        # assert 2 == 3
         concatted = vects.reshape(batch, VECT_LEN * 3)
-        # concatted_2 = vects.view(batch, VECT_LEN * 3)
-        # assert torch.allclose(concatted_1, concatted_2)
-        # assert 1 == 2
         return self.model(concatted)
 
 
-class Vects2_16(nn.Module):
+class Vects2Midpoint(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(VECT_LEN * 3, 64),
             ACTIVATION(),
-            nn.Linear(64, 16),
+            nn.Linear(64, 64),
+            ACTIVATION(),
+            nn.Linear(64, 64),
+            ACTIVATION(),
+            nn.Linear(64, 64),
+            ACTIVATION(),
+            nn.Linear(64, VECT_LEN),
         )
 
     def forward(self, vects) -> torch.Tensor:
         batch = vects.shape[0]
-        concatted = vects.view(batch, VECT_LEN * 3)
+        concatted = vects.reshape(batch, VECT_LEN * 3)
         return self.model(concatted)
 
 
@@ -148,7 +152,7 @@ class Brain(nn.Module):
         self.possibe_this_turn = Vect2Scalar()
         self.num_moves = Vect2Scalar()
         self.predicted_reward = Vect2Scalar()
-        self.midpoint = Vects2_16()
+        self.midpoint = Vects2Midpoint()
         self.acts = Action()
 
     def preprocess_frame(self, ob):
@@ -191,15 +195,3 @@ class BrainOut:
         self.acts = outs["acts"]
         self.num_moves = outs["num_moves"]
         self.rew = outs["rew"]
-
-    def __iter__(self):
-        return iter(
-            [
-                self.gen_poss,
-                self.poss_this_turn,
-                self.midpoint,
-                self.acts,
-                self.num_moves,
-                self.rew,
-            ]
-        )

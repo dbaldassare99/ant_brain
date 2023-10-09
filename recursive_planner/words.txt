@@ -11,10 +11,69 @@ it's guessing 0.5 loss for eveythng
 - all the relus are too harsh 
    -  sigmoid?
 learning rate was maybe too high?
-Seems to be learning with 10x slower lr 
+LEARNING RATE WAS TOO high
+1E-4 WORKS, 1E-3 LEARNS MEANS...
+
+working my way up to learning more of the outputs.
+it still doesn't seem to learn the probabilities properly
+- lower learning rate?
+   - no now it's just worse everywehre...
+- more epochs?
+- too small of batch size?
+- too small of batch size and too big of learning rate?
+
+making plans shorter for more dense data
+not really learning unfortulatly
+
+so rew can be guessed for long sequences, but not short ones
+num_moves cant be guessed in long sequences, doesnt work 5 - 20
+maybe it needs to have a stack of frames so it knows where it's at? 
+maybe we just dont have num_moves?
+
+What do we need...
+- rew (works for long sequences)
+- gen_poss
+- poss_this_turn
+
+Things to try 
+- can rew be guessed for shorter sequences if I stack frames? 
+- can closeness be learned? (far frames vs close frames?)
+
+you were using view instead of permute to change the color chanel in your frame preprocess
+It wasn't just permuting the stuff, it was really changing it...
+
+view != permute 
+
+So what am I trying to do with these none values really...
+The problem is that it needs to be done on a batch level...
+So we have a network, and sometimes we know and sometimes we don't 
+What would really solve this is to do the vision encoding seperate from the other stuff...
+With this we would train the vision thing seperate and then train all the tails...
+- I just like this much more honestly
+
+What does it look like
+- vision 2x -> rew, action.
+   - trains on this problem
+- visionvects -> acts
+- visionvects -> rew
+- vicionvects -> x 
+- just do this for everything...
+so the annoying part is that we already kinda have this, but if we want to do
+- this is what we would need to do unfortuntalely
+or we could make a key or something.....................!
+- we would for each memory object have somethig keeping track of whether each thing was to be learned on
+- When we batch we need to somehow keep this info
+- then we need to push the outputs on to these labels
+- if it's a good act its a good plans
+- if it's a bad act its a bad plan
+- if it's a good plan it's a bad act
+- if it's a bad act its a good plan
+
 
 The examples seem to be always in the same order...
 So maybe it's not getting a truly random sample of the data?
+
+optimizer 
 
 gen_poss
 poss_this_turn

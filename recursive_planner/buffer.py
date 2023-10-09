@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from tqdm import trange
 from typing import List
 import matplotlib.pyplot as plt
+from torchvision.transforms.functional import rgb_to_grayscale
 
 
 class SMA:
@@ -200,6 +201,7 @@ class Memory:
         self.acts = state.acts
         self.num_moves = state.num_moves
         self.noise = state.noise
+        self.learn_from = {}
 
     def add_action(
         self, queue: StateQueue, action_sequence: list[torch.Tensor]
@@ -218,8 +220,24 @@ class Memory:
         # we could say no... because we're alrealy < 95% this turn poss to get here
         self.poss_this_turn = None
 
+    def get_grey(self, frames):
+        # frame = [rgb_to_grayscale(frame.view(3, 224, 240)) for frame in frames]
+        frame = rgb_to_grayscale(frames[0].permute(2, 1, 0)).permute(2, 1, 0)
+        # print(frames[0].shape)
+        plt.imshow(frame)
+        plt.savefig("test.png")
+        print(frame.shape)
+        assert 2 == 3
+        frame = torch.stack(frame, 0)
+        frame = frame.view(224, 240, 3)
+        return frame
+
     def rand_start(self, buffer: list[Timestep], start: int, end: int):
+        # self.obs = self.get_grey([buffer[i].obs for i in range(start, start + 3)])
+        # self.goal = self.get_grey([buffer[i].obs for i in range(end, end + 3)])
         self.obs = buffer[start].obs
+        # print(self.obs.shape)
+        # assert 2 == 3
         self.goal = buffer[end].obs
 
         self.midpoint = buffer[(start + end) // 2].obs
@@ -228,6 +246,7 @@ class Memory:
         self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
         if self.num_moves < 10:
             self.acts[self.num_moves] = 6
+        self.learn_from["acts"] = self.num_moves < 15
         self.noise = None
         self.gen_poss = 1 if self.num_moves <= 50 else 0
         self.poss_this_turn = 1 if self.num_moves <= 10 else 0
@@ -246,11 +265,6 @@ class ExperienceBuffer:
     def sample_preprocess_and_batch(
         self, net: Brain, batch_size: int, print: bool = False
     ):
-        # start = len(self.buffer) - batch_size
-        # start = np.random.randint(0, start)
-        # idxs = np.arange(start, start + batch_size)
-        # mems = [self.buffer[i] for i in idxs]
-
         mems = np.random.choice(self.buffer, batch_size)
         obs = torch.stack([m.obs for m in mems]).float()
         goal = torch.stack([m.goal for m in mems]).float()
@@ -269,6 +283,7 @@ class ExperienceBuffer:
         if len(midpoint[0].shape) > 2:
             midpoint = net.vision(net.preprocess_frame(midpoint))
         acts = torch.stack([m.acts for m in mems]).long()
+        learn_from = [m.learn_from["acts"] for m in mems]
 
         def scalar_prep(x):
             return torch.tensor(x).unsqueeze(-1).float()
@@ -277,13 +292,12 @@ class ExperienceBuffer:
         num_moves = scalar_prep([m.num_moves for m in mems])
         poss_this_turn = scalar_prep([m.poss_this_turn for m in mems])
         gen_poss = scalar_prep([m.gen_poss for m in mems])
-        # num_moves = num_moves.unsqueeze(1)
-        # num_moves = self.num_moves_norm(num_moves)
-        # num_moves = num_moves.squeeze(1)
-        # rew = rew.unsqueeze(1)
-        # rew = self.rew_norm(rew)
-        # rew = rew.squeeze(1)
-
+        num_moves = num_moves.unsqueeze(1)
+        num_moves = self.num_moves_norm(num_moves)
+        num_moves = num_moves.squeeze(1)
+        rew = rew.unsqueeze(1)
+        rew = self.rew_norm(rew)
+        rew = rew.squeeze(1)
         if print:
             label_dict = {
                 "gen_poss": gen_poss,
@@ -314,7 +328,7 @@ class ExperienceBuffer:
                 "rew": rew,
             }
         )
-        return ins, labels
+        return ins, labels, learn_from
 
 
 class TorchGym:
@@ -329,10 +343,10 @@ class TorchGym:
     def step(self, action):
         action_dict = {
             0: 16,  # noop
-            1: 3,  # left
+            1: 18,  # 3,  # left lol only right plz
             2: 7,  # right
             3: 18,  # jump
-            4: 21,  # jump left
+            4: 21,  # 21,  # jump left
             5: 25,  # jump right
         }
         if isinstance(action, torch.Tensor):
