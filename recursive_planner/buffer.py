@@ -1,5 +1,5 @@
 import torch
-from nets import Brain, BrainOut
+from nets import VisionTrainer, BrainOut
 from torch.func import jacrev, vmap
 import numpy as np
 from dataclasses import dataclass
@@ -33,6 +33,39 @@ class Timestep:
     truncated: bool
     info: dict
     act: int
+
+
+class ExperienceBuffer:
+    def __init__(self):
+        self.buffer: List[Timestep] = []
+        self.sma = SMA(100)
+
+    def add(self, timestep: Timestep):
+        self.buffer.append(timestep)
+        self.sma.add(timestep.rew)
+
+    def vision_examples(self, batch_size: int, make_fig: bool = False):
+        sample_idxs = np.random.randint(0, len(self.buffer) - 1, batch_size)
+        frame_1 = torch.stack([self.buffer[i].obs for i in sample_idxs])
+        frame_2 = torch.stack([self.buffer[i + 1].obs for i in sample_idxs])
+        act = torch.tensor([self.buffer[i].act for i in sample_idxs])
+        rew = torch.tensor([self.buffer[i + 1].rew for i in sample_idxs])
+        if make_fig:
+            fig, axes = plt.subplots(2, batch_size, figsize=(30, 7))
+            for i in range(batch_size):
+                axes[0, i].imshow(frame_1[i].int())
+                axes[1, i].imshow(frame_2[i].int())
+            label_dict = {
+                "acts": act,
+                "rew": rew,
+            }
+            for ax, i in zip(axes[0], range(batch_size)):
+                infos = [f"{k}: {v[i].item():.2f}" for k, v in label_dict.items()]
+                infos = str.join("\n", infos)
+                ax.set_title(infos)
+            fig.tight_layout()
+            plt.savefig("test.png")
+        return (frame_1, frame_2), (act, rew)
 
 
 class StateQueue:
@@ -100,7 +133,7 @@ class State:
     # no_batch
     def optimize_subplan(
         self,
-        net: Brain,
+        net: VisionTrainer,
         steps: int = 200,
     ):
         def subplan_optim_loss(xs):
@@ -129,7 +162,7 @@ class State:
     # no batch!
     def optimize_plan(
         self,
-        net: Brain,
+        net: VisionTrainer,
         steps: int = 200,
     ):
         def gen_poss_loss(xs):
@@ -167,7 +200,7 @@ class State:
 
     def update(
         self,
-        net: Brain,
+        net: VisionTrainer,
         obs: torch.Tensor = None,
         goal: torch.Tensor = None,
         noise: torch.Tensor = None,
@@ -253,7 +286,7 @@ class Memory:
         return self
 
 
-class ExperienceBuffer:
+class MemoryBuffer:
     def __init__(self) -> None:
         self.buffer: List[Memory] = []
         self.num_moves_norm = torch.nn.BatchNorm1d(1)
@@ -263,7 +296,7 @@ class ExperienceBuffer:
         self.buffer.append(example)
 
     def sample_preprocess_and_batch(
-        self, net: Brain, batch_size: int, print: bool = False
+        self, net: VisionTrainer, batch_size: int, print: bool = False
     ):
         mems = np.random.choice(self.buffer, batch_size)
         obs = torch.stack([m.obs for m in mems]).float()
@@ -335,6 +368,7 @@ class TorchGym:
     def __init__(self, gym):
         self.gym = gym
         self.action_space = gym.action_space
+        self.frame_avg = torch.zeros(224, 240, 3)
 
     def rand_act(self):
         return np.random.randint(0, 6)
@@ -353,9 +387,11 @@ class TorchGym:
             action = action.item()
         action = action_dict[action]
         ret = self.gym.step(action)
-        obs = torch.tensor(ret[0]).float()
+        self.frame_avg = torch.roll(self.frame_avg, -1, 2)
+        obs = torch.tensor(ret[0]).float().permute(2, 0, 1)
+        self.frame_avg[:, :, -1] = rgb_to_grayscale(obs).squeeze()
         rew = torch.tensor(ret[1]).float()
-        return obs, rew, ret[2], ret[3], ret[4]
+        return self.frame_avg, rew, ret[2], ret[3], ret[4]
 
     # gymnasium.Env.reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
     def reset(self):

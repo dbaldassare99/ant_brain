@@ -143,48 +143,41 @@ class Action(nn.Module):
         return torch.stack(acts, dim=2)
 
 
-class Brain(nn.Module):
-    def __init__(self):
+class VisionTrainer(nn.Module):
+    def __init__(self, vision):
         super().__init__()
-        self.vision = Vision()
-        self.trunk = Trunk()
-        self.generally_possibe = Vect2Scalar()
-        self.possibe_this_turn = Vect2Scalar()
-        self.num_moves = Vect2Scalar()
-        self.predicted_reward = Vect2Scalar()
-        self.midpoint = Vects2Midpoint()
-        self.acts = Action()
+        self.vision = vision
+        self.rew = nn.Sequential(
+            nn.Linear(VECT_LEN * 2, 32),
+            ACTIVATION(),
+            nn.Linear(32, 32),
+            ACTIVATION(),
+            nn.Linear(32, 1),
+        )
+        self.act = nn.Sequential(
+            nn.Linear(VECT_LEN * 2, 32),
+            ACTIVATION(),
+            nn.Linear(32, 32),
+            ACTIVATION(),
+            nn.Linear(32, 7),
+        )
 
     def preprocess_frame(self, ob):
         ob = ob.permute(0, 3, 1, 2)
         return ob
 
-    def forward(
-        self, frame_1: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
-    ) -> dict:
-        batched = True
-        if len(frame_1.shape) == 3:  # batch if not batched
-            frame_1 = frame_1.unsqueeze(0)
-            goal = goal.unsqueeze(0)
-            noise = noise.unsqueeze(0)
-            batched = False
-        obs = [frame_1]  # add in 2nd frame here later to see goal
+    def forward(self, frame_1: torch.Tensor, frame_2: torch.Tensor) -> dict:
+        obs = [frame_1, frame_2]
         seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
-        seen = torch.stack(seen, dim=1)
-        seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
-        vects = seen
-        # vects = self.trunk(seen)  # doesn't help with loss
-        rets = {
-            "gen_poss": F.sigmoid(self.generally_possibe(vects)),
-            "poss_this_turn": F.sigmoid(self.possibe_this_turn(vects)),
-            "midpoint": self.midpoint(vects),
-            "acts": self.acts(vects),
-            "num_moves": self.num_moves(vects),
-            "rew": self.predicted_reward(vects),
-        }
-        if not batched:  # unbatch if not batched
-            rets = {k: v.squeeze(0) for k, v in rets.items()}
-        return rets
+        vects = torch.stack(seen, dim=1)
+        batch = vects.shape[0]
+        concatted = vects.reshape(batch, VECT_LEN * 2)
+        return (self.act(concatted), self.rew(concatted))
+
+    def loss(self, outputs, labels):
+        act_loss = torch.nn.functional.cross_entropy(outputs[0], labels[0])
+        rew_loss = torch.nn.functional.mse_loss(outputs[1].squeeze(), labels[1])
+        return (act_loss + rew_loss).mean(), (act_loss, rew_loss)
 
 
 class BrainOut:

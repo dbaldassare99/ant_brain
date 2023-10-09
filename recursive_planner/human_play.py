@@ -1,5 +1,5 @@
 # import gymnasium as gym
-from buffer import Timestep, ExperienceBuffer, TorchGym
+from buffer import Timestep, MemoryBuffer, TorchGym
 import torch
 import retro
 from gymnasium.utils.play import play
@@ -9,7 +9,7 @@ import numpy as np
 class Human:
     def __init__(self, env):
         self.env = env
-        self.notes = ExperienceBuffer()
+        self.notes = MemoryBuffer()
 
     def save(
         self,
