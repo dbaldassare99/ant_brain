@@ -388,10 +388,11 @@ class TorchGym:
         action = action_dict[action]
         ret = self.gym.step(action)
         self.frame_avg = torch.roll(self.frame_avg, -1, 2)
-        obs = torch.tensor(ret[0]).float().permute(2, 0, 1)
-        self.frame_avg[:, :, -1] = rgb_to_grayscale(obs).squeeze()
+        obs = torch.tensor(ret[0]).float()
+        self.frame_avg[:, :, -1] = rgb_to_grayscale(obs.permute(2, 0, 1)).squeeze()
         rew = torch.tensor(ret[1]).float()
-        return self.frame_avg, rew, ret[2], ret[3], ret[4]
+        # return self.frame_avg, rew, ret[2], ret[3], ret[4]
+        return obs, rew, ret[2], ret[3], ret[4]
 
     # gymnasium.Env.reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
     def reset(self):
