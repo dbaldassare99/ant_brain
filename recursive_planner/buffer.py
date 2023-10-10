@@ -1,5 +1,5 @@
 import torch
-from nets import VisionTrainer, BrainOut
+from nets import VisionTrainer, BrainOut, Brain, VECT_LEN
 from torch.func import jacrev, vmap
 import numpy as np
 from dataclasses import dataclass
@@ -43,6 +43,9 @@ class ExperienceBuffer:
     def add(self, timestep: Timestep):
         self.buffer.append(timestep)
         self.sma.add(timestep.rew)
+
+    def __getitem__(self, idx: int) -> Timestep:
+        return self.buffer[idx]
 
     def vision_examples(self, batch_size: int, make_fig: bool = False):
         sample_idxs = np.random.randint(0, len(self.buffer) - 1, batch_size)
@@ -91,8 +94,8 @@ class State:
     def __init__(
         self,
         obs: torch.Tensor = None,
-        goal: torch.Tensor = torch.randn(16),  # honestly, too jank 4 me
-        noise: torch.Tensor = torch.randn(16),  # yep that's jank
+        goal: torch.Tensor = torch.randn(VECT_LEN),  # honestly, too jank 4 me
+        noise: torch.Tensor = torch.randn(VECT_LEN),  # yep that's jank
         vects: torch.Tensor = None,
         midpoint: torch.Tensor = None,
         acts: torch.Tensor = None,
@@ -133,7 +136,7 @@ class State:
     # no_batch
     def optimize_subplan(
         self,
-        net: VisionTrainer,
+        net: Brain,
         steps: int = 200,
     ):
         def subplan_optim_loss(xs):
@@ -162,7 +165,7 @@ class State:
     # no batch!
     def optimize_plan(
         self,
-        net: VisionTrainer,
+        net: Brain,
         steps: int = 200,
     ):
         def gen_poss_loss(xs):
@@ -296,7 +299,7 @@ class MemoryBuffer:
         self.buffer.append(example)
 
     def sample_preprocess_and_batch(
-        self, net: VisionTrainer, batch_size: int, print: bool = False
+        self, net: Brain, batch_size: int, print: bool = False
     ):
         mems = np.random.choice(self.buffer, batch_size)
         obs = torch.stack([m.obs for m in mems]).float()
