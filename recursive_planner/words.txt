@@ -1,4 +1,10 @@
-its not training because...
+have it not jacobian through the vision network.
+find out why it's not learning actions
+set up the ability to not learn some examples
+
+
+
+its not training because... view != permute...
 it's guessing 0.5 loss for eveythng
 - action inputs are vague (multple classes to one acton, how could you learn it)
    - 7 long, 6 is eos token
@@ -43,6 +49,31 @@ you were using view instead of permute to change the color chanel in your frame 
 It wasn't just permuting the stuff, it was really changing it...
 
 view != permute 
+
+[(model(includes loss), inputs, labels, m?odel_x_optimizer?), (...)]
+
+so the problem with this many models thing is that if im going to optimize with the 
+jacobian I need to have each model output enough to optimize for it
+
+in this case we have no nones
+have 2 datasets (one for actor, one for planner)
+train twice
+one specializes in acting, the other in plannning.
+imo they're both good.
+this one doesn't need a lot of the stuff the othe one does.
+
+Planner - obs, goal, noise(for when making a subplan)
+- gen_poss
+- midpoint
+- rew
+- num_moves
+
+Actor - obs, goal, noise
+- poss_this_turn
+- rew
+- num_moves
+- acts
+
 
 So what am I trying to do with these none values really...
 The problem is that it needs to be done on a batch level...

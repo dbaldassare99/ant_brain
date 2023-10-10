@@ -180,6 +180,50 @@ class VisionTrainer(nn.Module):
         return (act_loss + rew_loss).mean(), (act_loss, rew_loss)
 
 
+class Brain(nn.Module):
+    def __init__(self, vision):
+        super().__init__()
+        self.vision = vision
+        self.trunk = Trunk()
+        self.generally_possibe = Vect2Scalar()
+        self.possibe_this_turn = Vect2Scalar()
+        self.num_moves = Vect2Scalar()
+        self.predicted_reward = Vect2Scalar()
+        self.midpoint = Vects2Midpoint()
+        self.acts = Action()
+
+    def forward(
+        self, frame_1: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
+    ) -> dict:
+        batched = True
+        if len(frame_1.shape) == 3:  # batch if not batched
+            frame_1 = frame_1.unsqueeze(0)
+            goal = goal.unsqueeze(0)
+            noise = noise.unsqueeze(0)
+            batched = False
+        obs = [frame_1]  # add in 2nd frame here later to see goal
+        seen = [self.vision(self.preprocess_frame(ob)) for ob in obs]
+        seen = torch.stack(seen, dim=1)
+        seen = torch.cat([seen, goal.unsqueeze(1), noise.unsqueeze(1)], dim=1)
+        vects = seen
+        # vects = self.trunk(seen)  # doesn't help with loss
+        rets = {
+            "gen_poss": self.generally_possibe(vects),
+            "poss_this_turn": self.possibe_this_turn(vects),
+            "midpoint": self.midpoint(vects),
+            "acts": self.acts(vects),
+            "num_moves": self.num_moves(vects),
+            "rew": self.predicted_reward(vects),
+        }
+        if not batched:  # unbatch if not batched
+            rets = {k: v.squeeze(0) for k, v in rets.items()}
+        return rets
+
+    def preprocess_frame(self, ob):
+        ob = ob.permute(0, 3, 1, 2)
+        return ob
+
+
 class BrainOut:
     def __init__(self, outs: dict[str, torch.Tensor]):
         self.gen_poss = outs["gen_poss"]
