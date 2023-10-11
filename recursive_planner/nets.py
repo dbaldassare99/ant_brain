@@ -6,6 +6,9 @@ from torchvision import transforms
 from typing_extensions import Self
 from positional_encodings.torch_encodings import PositionalEncoding1D, Summer
 from matplotlib import pyplot as plt
+import pytorch_lightning as pl
+from torch import optim, nn, utils, Tensor
+
 
 VECT_LEN = 32
 ACTIVATION = nn.ReLU
@@ -98,49 +101,20 @@ class Vects2Midpoint(nn.Module):
 class Action(nn.Module):
     def __init__(self):
         super().__init__()
-        # self.unfold = nn.LSTM(1, 16, batch_first=True)
-        # self.encoder_h = Vects2_16()
-        # self.encoder_c = Vects2_16()
-        # self.action_decoder = nn.Linear(16, 37)
-
-        # 48 + 37 + 1 = 85
-        # self.unfold = nn.Linear(85, 37)
-        self.nets = [nn.Linear(VECT_LEN * 3, 7) for _ in range(10)]
-        self.pre_nets = nn.Sequential(
-            nn.Linear(48, 48),
-            ACTIVATION(),
-            nn.Linear(48, 48),
-            ACTIVATION(),
-            nn.Linear(48, 48),
-            ACTIVATION(),
-        )
+        self.unfold = nn.LSTM(1, VECT_LEN, batch_first=True)
+        self.encoder_h = Vects2Midpoint()
+        self.encoder_c = Vects2Midpoint()
+        self.action_decoder = nn.Linear(VECT_LEN, 7)
 
     def forward(self, vects: torch.Tensor):
-        # batch = vects.shape[0]
-        # vects = vects.view(batch, 48)
-        # ins = torch.ones(batch, 37)
-        # outs = torch.zeros(batch, 37, 10)
-        # for i in range(10):
-        #     ins = torch.cat([ins, vects], dim=1)
-        #     ins = self.unfold(ins)
-        #     ins = torch.nn.functional.softmax(ins, dim=1)
-        #     outs[:, :, i] = ins
-        # return outs
-
-        # batch = vects.shape[0]
-        # h = self.encoder_h(vects).unsqueeze(0)
-        # c = self.encoder_c(vects).unsqueeze(0)
-        # inputs = torch.ones(batch, 10, 1)
-        # acts, (h, c) = self.unfold(inputs, (h, c))
-        # acts = self.action_decoder(acts)
-        # acts = acts.view(batch, 37, 10)
-        # return acts
-
         batch = vects.shape[0]
-        vects = vects.view(batch, VECT_LEN * 3)
-        # vects = self.pre_nets(vects)
-        acts = [layer(vects) for layer in self.nets]
-        return torch.stack(acts, dim=2)
+        h = self.encoder_h(vects).unsqueeze(0)
+        c = self.encoder_c(vects).unsqueeze(0)
+        inputs = torch.ones(batch, 10, 1)
+        acts, (h, c) = self.unfold(inputs, (h, c))
+        acts = self.action_decoder(acts)
+        acts = acts.view(batch, 7, 10)
+        return acts
 
 
 class VisionTrainer(nn.Module):
@@ -180,11 +154,11 @@ class VisionTrainer(nn.Module):
         return (act_loss + rew_loss).mean(), (act_loss, rew_loss)
 
 
-class Brain(nn.Module):
+class Brain(pl.LightningModule):
     def __init__(self, vision):
         super().__init__()
         self.vision = vision
-        self.trunk = Trunk()
+        # self.trunk = Trunk()
         self.generally_possibe = Vect2Scalar()
         self.possibe_this_turn = Vect2Scalar()
         self.num_moves = Vect2Scalar()
@@ -219,9 +193,104 @@ class Brain(nn.Module):
             rets = {k: v.squeeze(0) for k, v in rets.items()}
         return rets
 
+    def vision_encode(self, ob):
+        batched = True
+        if len(ob.shape) == 3:
+            ob = ob.unsqueeze(0)
+            batched = False
+        ret = self.vision(self.preprocess_frame(ob))
+        if not batched:
+            ret = ret.squeeze(0)
+        return ret
+
+    def forward_without_vision(
+        self, encoded_obs: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
+    ) -> dict:
+        batched = True
+        if len(encoded_obs.shape) == 1:  # batch if not batched
+            encoded_obs = encoded_obs.unsqueeze(0)
+            goal = goal.unsqueeze(0)
+            noise = noise.unsqueeze(0)
+            batched = False
+        seen = torch.cat(
+            [encoded_obs.unsqueeze(1), goal.unsqueeze(1), noise.unsqueeze(1)], dim=1
+        )
+        vects = seen
+        # vects = self.trunk(seen)  # doesn't help with loss
+        rets = {
+            "gen_poss": self.generally_possibe(vects),
+            "poss_this_turn": self.possibe_this_turn(vects),
+            "midpoint": self.midpoint(vects),
+            "acts": self.acts(vects),
+            "num_moves": self.num_moves(vects),
+            "rew": self.predicted_reward(vects),
+        }
+        if not batched:  # unbatch if not batched
+            rets = {k: v.squeeze(0) for k, v in rets.items()}
+        return rets
+
     def preprocess_frame(self, ob):
         ob = ob.permute(0, 3, 1, 2)
         return ob
+
+    def loss_fn(self, outputs, labels):
+        def scalar_only(l: BrainOut):
+            return l.gen_poss, l.poss_this_turn, l.num_moves, l.rew
+
+        def list_mean(l: list[torch.Tensor]) -> torch.Tensor:
+            return sum(l) / len(l)
+
+        def print_scalar(o, l):
+            print(torch.stack([o, l], dim=1).squeeze())
+
+        # print(learn_from)
+        # print(labels.acts)
+        # for i, replace in enumerate(learn_from):
+        #     labels.acts[i:...] = outputs.acts[i:...] if replace else labels.acts[i:...]
+        # print(labels.acts)
+        # assert 2 == 3
+
+        scalar_losses = [
+            torch.nn.functional.mse_loss(x, y).mean()
+            for x, y in zip(scalar_only(outputs), scalar_only(labels))
+        ]
+        scalar_loss = list_mean(scalar_losses)
+        vect_loss = 1 - (
+            torch.nn.functional.cosine_similarity(
+                outputs.midpoint, labels.midpoint
+            ).mean()
+        )
+        cat_loss = torch.nn.functional.cross_entropy(outputs.acts, labels.acts).mean()
+
+        # print_scalar(outputs.gen_poss, labels.gen_poss)
+        # print_scalar(outputs.poss_this_turn, labels.poss_this_turn)
+        # print_scalar(outputs.rew, labels.rew)
+        # print_scalar(outputs.num_moves, labels.num_moves)
+
+        return list_mean([scalar_loss, vect_loss, cat_loss]), (
+            scalar_loss.item(),
+            vect_loss.item(),
+            cat_loss.item(),
+        )
+
+    def training_step(self, batch, batch_idx):
+        ins, labels = batch
+        obs, goal, noise = (v for k, v in ins.items())
+        labels = BrainOut(labels)
+        outputs = BrainOut(self(obs, goal, noise))
+        loss, (scalar, vect, cat) = self.loss_fn(outputs, labels)
+        self.log("loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        return self.training_step(batch, batch_idx)
+
+    def configure_optimizers(self):
+        self.vision.requires_grad_(False)
+        optimizer = torch.optim.Adam(
+            filter(lambda p: p.requires_grad, self.parameters())
+        )
+        return optimizer
 
 
 class BrainOut:

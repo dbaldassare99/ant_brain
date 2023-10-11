@@ -5,3 +5,4 @@ log/
 __pycache__/
 .pytest_cache/
 *model_checkpoints/
+lightning_logs/

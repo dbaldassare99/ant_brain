@@ -1,8 +1,19 @@
-have it not jacobian through the vision network.
-find out why it's not learning actions
+refactor to pyrtoch lightning? - clean up stuff...
+- i hate how it is right now, but it is working and wont take long to get early stopping...
+- would include turning our things into pytorch Datasets
+   - could just have our things turn themselves into pytorch datasets when it's time to train?
+   - not needing to colate would really clean up the code...
 set up the ability to not learn some examples
 
-
+have it not jacobian through the vision network.
+- done
+find out why it's not learning actions
+- loss goes down with lstm style network
+endless recursion handling
+- if it gets to depth of 8 for each thing
+   - max action len 10 (probably increase this to 20 anyways...)
+   - 2^8 * 10 = 2560 total actions in one plan...
+   - I think we can just set the max depth at 8...
 
 its not training because... view != permute...
 it's guessing 0.5 loss for eveythng
