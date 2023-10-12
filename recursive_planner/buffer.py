@@ -279,7 +279,7 @@ class Memory:
         self, queue: StateQueue, action_sequence: list[torch.Tensor]
     ) -> None:
         self.can_act = 1 if self.num_moves < 3 else 0
-        self.good_plan = 1 if self.can_act == 1 else None
+        self.gen_poss = 1 if self.can_act == 1 else None
         self.midpoint = queue.midpoint()
         self.num_moves = len(action_sequence)
         self.last_obs = queue.final_obs()
@@ -292,6 +292,7 @@ class Memory:
         self.last_obs = memories[-1].last_obs
         # we could say no... because we're alrealy < 95% this turn poss to get here
         self.poss_this_turn = None
+        self.acts = None
 
     def get_grey(self, frames):
         # frame = [rgb_to_grayscale(frame.view(3, 224, 240)) for frame in frames]
@@ -310,7 +311,6 @@ class Memory:
         # self.goal = self.get_grey([buffer[i].obs for i in range(end, end + 3)])
         self.obs = buffer[start].obs
         # print(self.obs.shape)
-        # assert 2 == 3
         self.goal = buffer[end].obs
 
         self.midpoint = buffer[(start + end) // 2].obs
@@ -345,6 +345,24 @@ class MemoryDataset(Dataset):
         if len(midpoint.shape) > 2:
             with torch.no_grad():
                 midpoint = self.net.vision_encode(midpoint)
+
+        no_loss = {}
+        if not mem.gen_poss:
+            mem.gen_poss = 1
+            no_loss["gen_poss"] = True
+        else:
+            no_loss["gen_poss"] = False
+        if not mem.poss_this_turn:
+            mem.poss_this_turn = 1
+            no_loss["poss_this_turn"] = True
+        else:
+            no_loss["poss_this_turn"] = False
+        if mem.acts == None:
+            mem.acts = torch.zeros(10, 6)
+            no_loss["acts"] = True
+        else:
+            no_loss["acts"] = False
+
         labels = {
             "gen_poss": torch.tensor(mem.gen_poss).unsqueeze(-1).float(),
             "poss_this_turn": torch.tensor(mem.poss_this_turn).unsqueeze(-1).float(),
@@ -353,7 +371,8 @@ class MemoryDataset(Dataset):
             "num_moves": torch.tensor(mem.num_moves).unsqueeze(-1).float(),
             "rew": mem.rew.unsqueeze(-1).float(),
         }
-        return ins, labels
+
+        return ins, labels, no_loss
 
     def __len__(self) -> int:
         return len(self.buffer)
@@ -438,11 +457,6 @@ class MemoryBuffer:
             }
         )
         return ins, labels, learn_from
-
-
-# class MemoryDataset:
-#     def __init__(self, buffer, idxs) -> None:
-#         self.buffer = buffer
 
 
 class TorchGym:

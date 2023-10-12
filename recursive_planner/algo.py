@@ -16,6 +16,7 @@ from buffer import (
 )
 import copy
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 
 class RP:
@@ -23,17 +24,15 @@ class RP:
         self.env = env
         self.vision = Vision()
         self.vision_trainer = VisionTrainer(self.vision).float()
-        self.vision_trainer.load_state_dict(
-            torch.load(
-                "/home/cibo/ant_brain/recursive_planner/model_checkpoints/vision_trainer.pt"
-            )
+        self.vision_path = (
+            "/home/cibo/ant_brain/recursive_planner/model_checkpoints/vision_trainer.pt"
         )
+        self.vision_trainer.load_state_dict(torch.load(self.vision_path))
         self.brain = Brain(self.vision)
-        # self.brain.load_state_dict(
-        #     torch.load(
-        #         "/home/cibo/ant_brain/recursive_planner/model_checkpoints/brain.pt"
-        #     )
-        # )
+        self.brain_path = (
+            "/home/cibo/ant_brain/recursive_planner/model_checkpoints/brain.pt"
+        )
+        # self.brain.load_state_dict(torch.load(self.brain_path))
         self.mem_notes = MemoryBuffer()
         self.buffer = ExperienceBuffer()
 
@@ -53,8 +52,8 @@ class RP:
 
     def random_bootstrap(self) -> None:
         _ = self.env.reset()
-        random_play_len = 500
-        max_sample_length = 200
+        random_play_len = 50
+        max_sample_length = 40
         assert max_sample_length < random_play_len
         for i in range(random_play_len):
             if i % 20 == 0:
@@ -128,93 +127,27 @@ class RP:
             self.mem_notes.add(plan_record)
             return plan_record
 
-    def make_trainer_loop(self, net, buffer):
+    def make_trainer_loop(self, net, buffer, path):
         generator1 = torch.Generator().manual_seed(42)
-        exp_dataset = buffer.to_Dataset(net)
-        train, val = torch.utils.data.random_split(
-            exp_dataset, [0.7, 0.3], generator=generator1
+        dataset = buffer.to_Dataset(net)
+        train = torch.utils.data.DataLoader(
+            dataset, shuffle=True, num_workers=8, batch_size=3
         )
-        train = torch.utils.data.DataLoader(train, shuffle=True, num_workers=8)
-        val = torch.utils.data.DataLoader(val, shuffle=False, num_workers=8)
-        trainer = pl.Trainer(limit_train_batches=100)
-        trainer.fit(net, train, val)
+        # train, val = torch.utils.data.random_split(
+        #     exp_dataset, [0.7, 0.3], generator=generator1
+        # )
+        # train = torch.utils.data.DataLoader(train, shuffle=True, num_workers=8)
+        # val = torch.utils.data.DataLoader(val, shuffle=False, num_workers=8)
+        trainer = pl.Trainer(
+            limit_train_batches=100,
+            # callbacks=[EarlyStopping(monitor="val_loss", mode="min")],
+            max_epochs=2,
+        )
+        # trainer.fit(net, train, val)
+        trainer.fit(net, train)
+        torch.save(net.state_dict(), path)
 
     def train(self, train_vision: bool = False):
         if train_vision:
             self.make_trainer_loop(self.vision_trainer, self.buffer)
-            # generator1 = torch.Generator().manual_seed(42)
-            # exp_dataset = self.buffer.to_Dataset(self.brain)
-            # train, val = torch.utils.data.random_split(
-            #     exp_dataset, [0.7, 0.3], generator=generator1
-            # )
-            # train = torch.utils.data.DataLoader(train, shuffle=True, num_workers=8)
-            # val = torch.utils.data.DataLoader(val, shuffle=True, num_workers=8)
-            # trainer = pl.Trainer(limit_train_batches=100)
-            # trainer.fit(self.vision_trainer, train, val)
-
-            # self.vision_trainer.train()
-            # self.vision_trainer.requires_grad_(True)
-            # optimizer = torch.optim.Adam(self.vision_trainer.parameters(), lr=1e-3)
-            # pbar = trange(400, desc="vision_train")
-            # for i in pbar:
-            #     optimizer.zero_grad()
-            #     ins, labels = self.buffer.vision_examples(64, i == -1)
-            #     outputs = self.vision_trainer(*ins)
-            #     loss, (act, rew) = self.vision_trainer.loss(outputs, labels)
-            #     loss.backward()
-            #     optimizer.step()
-            #     pbar.set_postfix_str(f"losses: act: {act:.2f} rew: {rew:.2f}")
-            # torch.save(
-            #     self.vision_trainer.state_dict(),
-            #     "/home/cibo/ant_brain/recursive_planner/model_checkpoints/vision_trainer.pt",
-            # )
-        self.make_trainer_loop(self.brain, self.mem_notes)
-        # generator1 = torch.Generator().manual_seed(42)
-        # mem_dataset = self.mem_notes.to_Dataset(self.brain)
-        # train, val = torch.utils.data.random_split(
-        #     mem_dataset, [0.7, 0.3], generator=generator1
-        # )
-        # train = torch.utils.data.DataLoader(train, shuffle=True, num_workers=8)
-        # val = torch.utils.data.DataLoader(val, shuffle=True, num_workers=8)
-        # trainer = pl.Trainer(limit_train_batches=100)
-        # trainer.fit(self.brain, train, val)
-
-    def loss_fn(self, outputs: BrainOut, labels: BrainOut):
-        def scalar_only(l: BrainOut):
-            return l.gen_poss, l.poss_this_turn, l.num_moves, l.rew
-
-        def list_mean(l: list[torch.Tensor]) -> torch.Tensor:
-            return sum(l) / len(l)
-
-        def print_scalar(o, l):
-            print(torch.stack([o, l], dim=1).squeeze())
-
-        # print(learn_from)
-        # print(labels.acts)
-        # for i, replace in enumerate(learn_from):
-        #     labels.acts[i:...] = outputs.acts[i:...] if replace else labels.acts[i:...]
-        # print(labels.acts)
-        # assert 2 == 3
-
-        scalar_losses = [
-            torch.nn.functional.mse_loss(x, y).mean()
-            for x, y in zip(scalar_only(outputs), scalar_only(labels))
-        ]
-        scalar_loss = list_mean(scalar_losses)
-        vect_loss = 1 - (
-            torch.nn.functional.cosine_similarity(
-                outputs.midpoint, labels.midpoint
-            ).mean()
-        )
-        cat_loss = torch.nn.functional.cross_entropy(outputs.acts, labels.acts).mean()
-
-        # print_scalar(outputs.gen_poss, labels.gen_poss)
-        # print_scalar(outputs.poss_this_turn, labels.poss_this_turn)
-        # print_scalar(outputs.rew, labels.rew)
-        # print_scalar(outputs.num_moves, labels.num_moves)
-
-        return list_mean([scalar_loss, vect_loss, cat_loss]), (
-            scalar_loss.item(),
-            vect_loss.item(),
-            cat_loss.item(),
-        )
+        self.make_trainer_loop(self.brain, self.mem_notes, self.brain_path)

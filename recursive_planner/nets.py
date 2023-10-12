@@ -274,16 +274,33 @@ class Brain(pl.LightningModule):
         )
 
     def training_step(self, batch, batch_idx):
-        ins, labels = batch
+        ins, labels, no_loss = batch
         obs, goal, noise = (v for k, v in ins.items())
+        outputs = self(obs, goal, noise)
+        labels = self.no_loss_replace(no_loss, outputs, labels)
         labels = BrainOut(labels)
-        outputs = BrainOut(self(obs, goal, noise))
+        outputs = BrainOut(outputs)
         loss, (scalar, vect, cat) = self.loss_fn(outputs, labels)
         self.log("loss", loss)
         return loss
 
+    def no_loss_replace(self, no_loss, outputs, labels):
+        for k, v in no_loss.items():
+            mask = torch.ones_like(outputs[k])
+            mask[:, ...] = v
+            print(k)
+            print(mask.shape, outputs[k].shape, labels[k].shape)
+            labels[k] = torch.where(mask, outputs[k], labels[k])
+        for k, v in labels.items():
+            print(k)
+            print(v)
+            print(outputs[k])
+            print(no_loss[k])
+
     def validation_step(self, batch, batch_idx):
-        return self.training_step(batch, batch_idx)
+        val_loss = self.training_step(batch, batch_idx)
+        self.log("val_loss", val_loss)
+        return val_loss
 
     def configure_optimizers(self):
         self.vision.requires_grad_(False)
