@@ -23,7 +23,7 @@ class RP:
     def __init__(self, env: TorchGym) -> None:
         self.env = env
         self.vision = Vision()
-        self.vision_trainer = VisionTrainer(self.vision).float()
+        self.vision_trainer = VisionTrainer(self.vision)
         self.vision_path = (
             "/home/cibo/ant_brain/recursive_planner/model_checkpoints/vision_trainer.pt"
         )
@@ -32,23 +32,25 @@ class RP:
         self.brain_path = (
             "/home/cibo/ant_brain/recursive_planner/model_checkpoints/brain.pt"
         )
-        # self.brain.load_state_dict(torch.load(self.brain_path))
+        self.brain.load_state_dict(torch.load(self.brain_path))
         self.mem_notes = MemoryBuffer()
         self.buffer = ExperienceBuffer()
 
     def play(self):
-        self.random_bootstrap()
+        # self.random_bootstrap()
         obs, info = self.env.reset()
         state = State(obs=obs)
-
+        count = 1
         while True:
+            count += 1
             self.brain.eval()
             print("\nmaking new plan")
             state.optimize_plan(self.brain)
             print("\nacting")
-            memory = self.recursive_actor(state)
-            state.obs = memory.last_obs
-            # self.train()
+            self.recursive_actor(state)
+            state.obs = self.buffer[-1].obs
+            if count % 5 == 0:
+                self.train()
 
     def random_bootstrap(self) -> None:
         _ = self.env.reset()
@@ -73,6 +75,7 @@ class RP:
             self.mem_notes.add(mem)
 
         self.train()
+        self.buffer = ExperienceBuffer()
         self.mem_notes = MemoryBuffer()
 
     def recursive_actor(
@@ -81,54 +84,43 @@ class RP:
         depth: int = 0,
     ) -> Memory:
         depth += 1
-        arg_state = copy.copy(state)  # to see how close we got!
         state.optimize_subplan(self.brain)
-        if depth > 3:
+        start = len(self.buffer) - 1
+        if depth > 3:  # failsafe
             state.poss_this_turn = 1
+        acted = False
         if state.poss_this_turn >= 0.5:
+            acted = True
             action_sequence = state.get_action_sequence()
             print(action_sequence)
-            queue = StateQueue()
             for action in action_sequence[0]:  # not parallel
-                queue(self.env.step(action))
-            # get info abt the action
-            state.optimize_subplan(self.brain)
-            action_record = Memory(state)
-            action_record.add_action(queue, action_sequence)
-            self.mem_notes.add(action_record)
-            return action_record
+                self.buffer.add(Timestep(*self.env.step(action), action))
         else:
-            # first half
-            state_part_1 = copy.copy(state)
-            state_part_1.goal = state.midpoint
-            memory_part_1 = self.recursive_actor(state_part_1, depth)
-            # second half
-            state_part_2 = copy.copy(state)
-            state_part_2.obs = memory_part_1.last_obs
-            memory_part_2 = self.recursive_actor(state_part_2, depth)
-            # third half (lol) (really 2nd half again)
-            state_part_3 = copy.copy(state)
-            state_part_3.obs = memory_part_2.last_obs
-            memory_part_3 = self.recursive_actor(state_part_3, depth)
+            sub_state = copy.copy(state)
+            sub_state.goal = state.midpoint
+            self.recursive_actor(sub_state, depth)
+            sub_state.goal = state.goal
+            sub_state.obs = self.buffer[-1].obs
+            self.recursive_actor(sub_state, depth)
+            sub_state.obs = self.buffer[-1].obs
+            self.recursive_actor(sub_state, depth)
 
-            # get info abt the plan
-            check_state = copy.copy(state)
-            check_state.obs = memory_part_3.last_obs
-            check_state.optimize_subplan(self.brain)
-            print("expected moves left in plan:", check_state.num_moves)
-            plan_record = Memory(state)
-            plan_record.add_plan([memory_part_1, memory_part_2, memory_part_3])
-            plan_record.gen_poss = (
-                1
-                if check_state.num_moves < 3
-                # or arg_state.rew - plan_record.predicted_reward <= 3
-                else 0
-            )
-            self.mem_notes.add(plan_record)
-            return plan_record
+        state.obs = self.buffer[-1].obs
+        state.optimize_subplan(self.brain)
+        print("expected moves left in plan:", f"{state.num_moves.item():.2f}")
+
+        poss_this_turn = 1 if state.num_moves <= 3 else 0
+        poss_this_turn = poss_this_turn if acted else None
+        mem = Memory(
+            self.buffer,
+            start=start,
+            gen_poss=1 if state.num_moves <= 5 else 0,  # rew too? is this ever none?
+            poss_this_turn=poss_this_turn,
+        )
+        self.mem_notes.add(mem)
 
     def make_trainer_loop(self, net, buffer, path):
-        generator1 = torch.Generator().manual_seed(42)
+        # generator1 = torch.Generator().manual_seed(42)
         dataset = buffer.to_Dataset(net)
         train = torch.utils.data.DataLoader(
             dataset, shuffle=True, num_workers=8, batch_size=3

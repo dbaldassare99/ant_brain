@@ -286,16 +286,16 @@ class Brain(pl.LightningModule):
 
     def no_loss_replace(self, no_loss, outputs, labels):
         for k, v in no_loss.items():
-            mask = torch.ones_like(outputs[k])
-            mask[:, ...] = v
-            print(k)
-            print(mask.shape, outputs[k].shape, labels[k].shape)
-            labels[k] = torch.where(mask, outputs[k], labels[k])
-        for k, v in labels.items():
-            print(k)
-            print(v)
-            print(outputs[k])
-            print(no_loss[k])
+            if k == "acts":
+                outs = outputs[k].argmax(dim=1)
+            else:
+                outs = outputs[k]
+            repeats = list(outs.shape)
+            for _ in range(len(repeats) - 1):
+                v = v.unsqueeze(-1)
+            mask = v.expand(repeats)
+            labels[k] = torch.where(mask, outs, labels[k])
+        return labels
 
     def validation_step(self, batch, batch_idx):
         val_loss = self.training_step(batch, batch_idx)

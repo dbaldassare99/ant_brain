@@ -59,6 +59,9 @@ class ExperienceBuffer:
         self.buffer.append(timestep)
         self.sma.add(timestep.rew)
 
+    def __len__(self) -> int:
+        return len(self.buffer)
+
     def __getitem__(self, idx: int) -> Timestep:
         return self.buffer[idx]
 
@@ -189,7 +192,7 @@ class State:
         self.update(net)
         after = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         after_str = update_str()
-        print("BEFORE", before_str, "AFTER", after_str)
+        # print("BEFORE", before_str, "AFTER", after_str)
         return before, after
 
     # no batch!
@@ -200,13 +203,11 @@ class State:
     ):
         def gen_poss_loss(xs):
             outs = BrainOut(xs)
-            # outs.norm_scalars()
             return outs.gen_poss
 
         def full_plan_loss(xs):
             outs = BrainOut(xs)
-            # outs.norm_scalars()
-            return outs.gen_poss + outs.rew  # - outs.num_moves
+            return outs.gen_poss + outs.rew - outs.num_moves
 
         def update_str():
             gen_poss = f"gen_poss: {self.gen_poss.item():.2f}"
@@ -218,7 +219,6 @@ class State:
         self.noise = torch.randn_like(self.noise)
         self.goal = torch.randn_like(self.goal)
         net = net.eval()
-        # gen_poss_grad = jacrev(lambda x, y, z: gen_poss_loss(net(x, y, z)), (1, 2))
         full_opt = jacrev(
             lambda x, y, z: full_plan_loss(net.forward_without_vision(x, y, z)), (1, 2)
         )
@@ -232,8 +232,8 @@ class State:
             self.noise = self.noise + grads[1] * self.lr
         self.update(net)
         after = gen_poss_loss(net(self.obs, self.goal, self.noise))
-        after_str = update_str()
-        print("BEFORE", before_str, "AFTER", after_str)
+        # after_str = update_str()
+        # print("BEFORE", before_str, "AFTER", after_str)
         return before, after
 
     def update(
@@ -258,72 +258,50 @@ class State:
 
 
 class Memory:
-    def __init__(
-        self,
-        state: State,
-    ):
-        self.obs = state.obs
-        self.goal = state.goal
-        self.vects = state.vects
-        self.gen_poss = state.gen_poss
-        self.poss_this_turn = state.poss_this_turn
-        self.midpoint = state.midpoint
-        self.rew = state.rew
-        self.acts = state.acts
-        self.num_moves = state.num_moves
-        self.noise = state.noise
-        self.learn_from = {}
-        self.last_obs = self.obs
-
-    def add_action(
-        self, queue: StateQueue, action_sequence: list[torch.Tensor]
-    ) -> None:
-        self.can_act = 1 if self.num_moves < 3 else 0
-        self.gen_poss = 1 if self.can_act == 1 else None
-        self.midpoint = queue.midpoint()
-        self.num_moves = len(action_sequence)
-        self.last_obs = queue.final_obs()
-
-    def add_plan(self, memories: list) -> None:
-        self.num_moves = sum([m.num_moves for m in memories])
-        self.rew = sum([m.rew for m in memories])
-        self.obs = memories[0].obs
-        self.goal = memories[-1].goal
-        self.last_obs = memories[-1].last_obs
-        # we could say no... because we're alrealy < 95% this turn poss to get here
-        self.poss_this_turn = None
-        self.acts = None
-
-    def get_grey(self, frames):
-        # frame = [rgb_to_grayscale(frame.view(3, 224, 240)) for frame in frames]
-        frame = rgb_to_grayscale(frames[0].permute(2, 1, 0)).permute(2, 1, 0)
-        # print(frames[0].shape)
-        plt.imshow(frame)
-        plt.savefig("test.png")
-        print(frame.shape)
-        assert 2 == 3
-        frame = torch.stack(frame, 0)
-        frame = frame.view(224, 240, 3)
-        return frame
-
-    def rand_start(self, buffer: list[Timestep], start: int, end: int):
-        # self.obs = self.get_grey([buffer[i].obs for i in range(start, start + 3)])
-        # self.goal = self.get_grey([buffer[i].obs for i in range(end, end + 3)])
+    def __init__(self, buffer, start, gen_poss, poss_this_turn):
+        self.no_loss = {
+            "gen_poss": False,
+            "poss_this_turn": False,
+            "acts": False,
+        }
+        end = len(buffer) - 1
+        self.poss_this_turn = poss_this_turn
+        if self.poss_this_turn == None:
+            self.poss_this_turn = 1
+            self.no_loss["poss_this_turn"] = True
+        self.gen_poss = gen_poss
+        if self.gen_poss == None:
+            self.gen_poss = 1
+            self.no_loss["gen_poss"] = True
         self.obs = buffer[start].obs
-        # print(self.obs.shape)
         self.goal = buffer[end].obs
-
         self.midpoint = buffer[(start + end) // 2].obs
-        self.num_moves = end - start
-        self.rew = sum([r.rew for r in buffer[start:end]])
         self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
+        self.rew = sum([r.rew for r in buffer[start:end]])
+        self.num_moves = end - start
         if self.num_moves < 10:
             self.acts[self.num_moves] = 6
-        self.learn_from["acts"] = self.num_moves < 15
-        self.noise = None
-        self.gen_poss = 1 if self.num_moves <= 100 else 0
-        self.poss_this_turn = 1 if self.num_moves <= 10 else 0
-        return self
+        if self.num_moves > 20:
+            self.no_loss["acts"] = True
+        self.convert_to_tensor()
+
+    def convert_to_tensor(self):
+        if not isinstance(self.obs, torch.Tensor):
+            self.obs = torch.tensor(self.obs).float()
+        if not isinstance(self.goal, torch.Tensor):
+            self.goal = torch.tensor(self.goal).float()
+        if not isinstance(self.midpoint, torch.Tensor):
+            self.midpoint = torch.tensor(self.midpoint).float()
+        if not isinstance(self.acts, torch.Tensor):
+            self.acts = torch.tensor(self.acts).int()
+        if not isinstance(self.rew, torch.Tensor):
+            self.rew = torch.tensor(self.rew).float()
+        if not isinstance(self.num_moves, torch.Tensor):
+            self.num_moves = torch.tensor(self.num_moves).float()
+        if not isinstance(self.gen_poss, torch.Tensor):
+            self.gen_poss = torch.tensor(self.gen_poss).float()
+        if not isinstance(self.poss_this_turn, torch.Tensor):
+            self.poss_this_turn = torch.tensor(self.poss_this_turn).float()
 
 
 class MemoryDataset(Dataset):
@@ -346,33 +324,16 @@ class MemoryDataset(Dataset):
             with torch.no_grad():
                 midpoint = self.net.vision_encode(midpoint)
 
-        no_loss = {}
-        if not mem.gen_poss:
-            mem.gen_poss = 1
-            no_loss["gen_poss"] = True
-        else:
-            no_loss["gen_poss"] = False
-        if not mem.poss_this_turn:
-            mem.poss_this_turn = 1
-            no_loss["poss_this_turn"] = True
-        else:
-            no_loss["poss_this_turn"] = False
-        if mem.acts == None:
-            mem.acts = torch.zeros(10, 6)
-            no_loss["acts"] = True
-        else:
-            no_loss["acts"] = False
-
         labels = {
-            "gen_poss": torch.tensor(mem.gen_poss).unsqueeze(-1).float(),
-            "poss_this_turn": torch.tensor(mem.poss_this_turn).unsqueeze(-1).float(),
+            "gen_poss": mem.gen_poss,
+            "poss_this_turn": mem.poss_this_turn,
             "midpoint": midpoint,
             "acts": mem.acts,
-            "num_moves": torch.tensor(mem.num_moves).unsqueeze(-1).float(),
-            "rew": mem.rew.unsqueeze(-1).float(),
+            "num_moves": mem.num_moves,
+            "rew": mem.rew,
         }
 
-        return ins, labels, no_loss
+        return ins, labels, mem.no_loss
 
     def __len__(self) -> int:
         return len(self.buffer)
@@ -386,6 +347,9 @@ class MemoryBuffer:
 
     def add(self, example: Memory):
         self.buffer.append(example)
+
+    def __len__(self) -> int:
+        return len(self.buffer)
 
     def to_Dataset(self, net: Brain) -> MemoryDataset:
         return MemoryDataset(self.buffer, net)
@@ -420,12 +384,6 @@ class MemoryBuffer:
         num_moves = scalar_prep([m.num_moves for m in mems])
         poss_this_turn = scalar_prep([m.poss_this_turn for m in mems])
         gen_poss = scalar_prep([m.gen_poss for m in mems])
-        # num_moves = num_moves.unsqueeze(1)
-        # num_moves = self.num_moves_norm(num_moves)
-        # num_moves = num_moves.squeeze(1)
-        # rew = rew.unsqueeze(1)
-        # rew = self.rew_norm(rew)
-        # rew = rew.squeeze(1)
         if print:
             label_dict = {
                 "gen_poss": gen_poss,

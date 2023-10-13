@@ -1,11 +1,25 @@
 TODO
+fix up memories
+- What are the memories really
+
+   - actual reward
+   - actions taken (sometimes)
+   - gen_poss
+   - poss_this_turn
+   - obs
+   - goal (final frame or imagined?)
+   - number of steps taken
+   - midpoint
+- we can get all of this from the experiene buffer if we just have a start frame...
+- Acts can then be yes
+
+
+DONE
 set up the ability to not learn some examples
 - have a dict to tell you what need to be replaced
 - create a tensor the size of the thing, with true where it needs to be replaced - broadcasting? learn...
    - max acts to get label
 - torch.where it...
-
-DONE
 refactor to pyrtoch lightning? - clean up stuff...
 - i hate how it is right now, but it is working and wont take long to get early stopping...
 - would include turning our things into pytorch Datasets
