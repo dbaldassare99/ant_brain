@@ -17,6 +17,8 @@ from buffer import (
 import copy
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch import Trainer
+from lightning.pytorch.loggers import TensorBoardLogger
 
 
 class RP:
@@ -51,11 +53,14 @@ class RP:
             state.obs = self.buffer[-1].obs
             if count % 5 == 0:
                 self.train()
+            if count % 300 == 0:
+                self.mem_notes = MemoryBuffer()
+                self.buffer = ExperienceBuffer()
 
     def random_bootstrap(self) -> None:
         _ = self.env.reset()
-        random_play_len = 50
-        max_sample_length = 40
+        random_play_len = 5_000
+        max_sample_length = 100
         assert max_sample_length < random_play_len
         for i in range(random_play_len):
             if i % 20 == 0:
@@ -70,8 +75,16 @@ class RP:
                 np.random.randint(1, max_sample_length),
                 np.random.randint(1, max_sample_length),
             )
-
-            mem = Memory(State()).rand_start(self.buffer, start, end)
+            len = end - start
+            gen_poss = 1 if len < 60 else 0
+            poss_this_turn = 1 if len < 10 else 0
+            mem = Memory(
+                buffer=self.buffer,
+                start=start,
+                gen_poss=gen_poss,
+                poss_this_turn=poss_this_turn,
+                end=end,
+            )
             self.mem_notes.add(mem)
 
         self.train()
@@ -86,13 +99,13 @@ class RP:
         depth += 1
         state.optimize_subplan(self.brain)
         start = len(self.buffer) - 1
-        if depth > 3:  # failsafe
+        if depth > 2:  # short plans only
             state.poss_this_turn = 1
         acted = False
         if state.poss_this_turn >= 0.5:
             acted = True
             action_sequence = state.get_action_sequence()
-            print(action_sequence)
+            print(action_sequence[0])
             for action in action_sequence[0]:  # not parallel
                 self.buffer.add(Timestep(*self.env.step(action), action))
         else:
@@ -111,10 +124,13 @@ class RP:
 
         poss_this_turn = 1 if state.num_moves <= 3 else 0
         poss_this_turn = poss_this_turn if acted else None
+        gen_poss = 1 if state.num_moves <= 5 else 0  # is this ever none? rew too?
+        if gen_poss == 1:
+            print("good plan saved")
         mem = Memory(
             self.buffer,
             start=start,
-            gen_poss=1 if state.num_moves <= 5 else 0,  # rew too? is this ever none?
+            gen_poss=gen_poss,
             poss_this_turn=poss_this_turn,
         )
         self.mem_notes.add(mem)
@@ -123,7 +139,7 @@ class RP:
         # generator1 = torch.Generator().manual_seed(42)
         dataset = buffer.to_Dataset(net)
         train = torch.utils.data.DataLoader(
-            dataset, shuffle=True, num_workers=8, batch_size=3
+            dataset, shuffle=True, num_workers=8, batch_size=32
         )
         # train, val = torch.utils.data.random_split(
         #     exp_dataset, [0.7, 0.3], generator=generator1
@@ -133,9 +149,11 @@ class RP:
         trainer = pl.Trainer(
             limit_train_batches=100,
             # callbacks=[EarlyStopping(monitor="val_loss", mode="min")],
-            max_epochs=2,
+            max_epochs=3,
+            log_every_n_steps=2,
         )
         # trainer.fit(net, train, val)
+
         trainer.fit(net, train)
         torch.save(net.state_dict(), path)
 

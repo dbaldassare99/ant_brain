@@ -243,12 +243,10 @@ class Brain(pl.LightningModule):
         def print_scalar(o, l):
             print(torch.stack([o, l], dim=1).squeeze())
 
-        # print(learn_from)
-        # print(labels.acts)
-        # for i, replace in enumerate(learn_from):
-        #     labels.acts[i:...] = outputs.acts[i:...] if replace else labels.acts[i:...]
-        # print(labels.acts)
-        # assert 2 == 3
+        print_scalar(outputs.gen_poss, labels.gen_poss)
+        print_scalar(outputs.poss_this_turn, labels.poss_this_turn)
+        print_scalar(outputs.num_moves, labels.num_moves)
+        print_scalar(outputs.rew, labels.rew)
 
         scalar_losses = [
             torch.nn.functional.mse_loss(x, y).mean()
@@ -261,12 +259,6 @@ class Brain(pl.LightningModule):
             ).mean()
         )
         cat_loss = torch.nn.functional.cross_entropy(outputs.acts, labels.acts).mean()
-
-        # print_scalar(outputs.gen_poss, labels.gen_poss)
-        # print_scalar(outputs.poss_this_turn, labels.poss_this_turn)
-        # print_scalar(outputs.rew, labels.rew)
-        # print_scalar(outputs.num_moves, labels.num_moves)
-
         return list_mean([scalar_loss, vect_loss, cat_loss]), (
             scalar_loss.item(),
             vect_loss.item(),
@@ -282,19 +274,24 @@ class Brain(pl.LightningModule):
         outputs = BrainOut(outputs)
         loss, (scalar, vect, cat) = self.loss_fn(outputs, labels)
         self.log("loss", loss)
+        self.log("scalar", scalar)
+        self.log("vect", vect)
+        self.log("cat", cat)
         return loss
 
     def no_loss_replace(self, no_loss, outputs, labels):
         for k, v in no_loss.items():
+            label = labels[k]
             if k == "acts":
                 outs = outputs[k].argmax(dim=1)
             else:
+                # label = label.unsqueeze(-1)  # kinda jankey (dont love this)
                 outs = outputs[k]
             repeats = list(outs.shape)
             for _ in range(len(repeats) - 1):
                 v = v.unsqueeze(-1)
             mask = v.expand(repeats)
-            labels[k] = torch.where(mask, outs, labels[k])
+            labels[k] = torch.where(mask, outs, label)
         return labels
 
     def validation_step(self, batch, batch_idx):
@@ -318,3 +315,13 @@ class BrainOut:
         self.acts = outs["acts"]
         self.num_moves = outs["num_moves"]
         self.rew = outs["rew"]
+
+    def __iter__(self):
+        yield from (
+            self.gen_poss,
+            self.poss_this_turn,
+            self.midpoint,
+            self.acts,
+            self.num_moves,
+            self.rew,
+        )

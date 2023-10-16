@@ -258,13 +258,14 @@ class State:
 
 
 class Memory:
-    def __init__(self, buffer, start, gen_poss, poss_this_turn):
+    def __init__(self, buffer, start, gen_poss, poss_this_turn, end=None):
         self.no_loss = {
             "gen_poss": False,
             "poss_this_turn": False,
             "acts": False,
         }
-        end = len(buffer) - 1
+        if not end:
+            end = len(buffer) - 1
         self.poss_this_turn = poss_this_turn
         if self.poss_this_turn == None:
             self.poss_this_turn = 1
@@ -276,9 +277,12 @@ class Memory:
         self.obs = buffer[start].obs
         self.goal = buffer[end].obs
         self.midpoint = buffer[(start + end) // 2].obs
-        self.acts = torch.tensor([t.act for t in buffer[start : start + 10]])
         self.rew = sum([r.rew for r in buffer[start:end]])
         self.num_moves = end - start
+        self.acts = [t.act for t in buffer[start : start + 10]]
+        if len(self.acts) < 10:
+            for _ in range(10 - len(self.acts)):
+                self.acts.append(0)
         if self.num_moves < 10:
             self.acts[self.num_moves] = 6
         if self.num_moves > 20:
@@ -293,7 +297,7 @@ class Memory:
         if not isinstance(self.midpoint, torch.Tensor):
             self.midpoint = torch.tensor(self.midpoint).float()
         if not isinstance(self.acts, torch.Tensor):
-            self.acts = torch.tensor(self.acts).int()
+            self.acts = torch.tensor(self.acts)
         if not isinstance(self.rew, torch.Tensor):
             self.rew = torch.tensor(self.rew).float()
         if not isinstance(self.num_moves, torch.Tensor):
@@ -302,6 +306,10 @@ class Memory:
             self.gen_poss = torch.tensor(self.gen_poss).float()
         if not isinstance(self.poss_this_turn, torch.Tensor):
             self.poss_this_turn = torch.tensor(self.poss_this_turn).float()
+        self.rew = self.rew.unsqueeze(-1)
+        self.num_moves = self.num_moves.unsqueeze(-1)
+        self.gen_poss = self.gen_poss.unsqueeze(-1)
+        self.poss_this_turn = self.poss_this_turn.unsqueeze(-1)
 
 
 class MemoryDataset(Dataset):

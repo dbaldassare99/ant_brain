@@ -1,4 +1,30 @@
+What's wrong 
+So this is the hardest part for sure 
+
+What could be going wrong
+- it learns some set action sequence and then gets stuck with it
+- literally something buggy, not sure why num_moves is so high!!!
+- we're not logging a bunch of important stuff
+   - get the logger up and running
+
+What is really going on...
+- poss this turn is the same as num_moves < 11...
+   - no this is short term bad thinking, poss this turn is poss this turn
+
+Okay so what the f am I really doing here
+
+- Early stopping for the gradient optimizaiton steps so it's all faster?
+
 TODO
+- how about we do training differntly than I thought...
+- things we can do direcct from buffer we do
+   - guess aciton siequence, rew, num_moves
+- train gen_poss and poss this turn directly from the plans and actions
+- train vision directly from buffer too...
+
+
+
+DONE
 fix up memories
 - What are the memories really
 
@@ -14,7 +40,6 @@ fix up memories
 - Acts can then be yes
 
 
-DONE
 set up the ability to not learn some examples
 - have a dict to tell you what need to be replaced
 - create a tensor the size of the thing, with true where it needs to be replaced - broadcasting? learn...
