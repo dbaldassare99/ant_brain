@@ -174,7 +174,10 @@ class State:
         self.noise = torch.randn_like(self.noise)
         net = net.eval()
         jacobian = jacrev(
-            lambda x, y, z: subplan_optim_loss(net.forward_without_vision(x, y, z)), 2
+            lambda x, y, z: subplan_optim_loss(
+                net.forward_without_vision_mid_act(x, y, z)
+            ),
+            2,
         )
         self.update(net)
         before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
@@ -220,7 +223,8 @@ class State:
         self.goal = torch.randn_like(self.goal)
         net = net.eval()
         full_opt = jacrev(
-            lambda x, y, z: full_plan_loss(net.forward_without_vision(x, y, z)), (1, 2)
+            lambda x, y, z: full_plan_loss(net.forward_without_vision_mid_act(x, y, z)),
+            (1, 2),
         )
         self.update(net)
         before = gen_poss_loss(net(self.obs, self.goal, self.noise))

@@ -203,7 +203,7 @@ class Brain(pl.LightningModule):
             ret = ret.squeeze(0)
         return ret
 
-    def forward_without_vision(
+    def forward_without_vision_mid_act(
         self, encoded_obs: torch.Tensor, goal: torch.Tensor, noise: torch.Tensor
     ) -> dict:
         batched = True
@@ -220,13 +220,15 @@ class Brain(pl.LightningModule):
         rets = {
             "gen_poss": self.generally_possibe(vects),
             "poss_this_turn": self.possibe_this_turn(vects),
-            "midpoint": self.midpoint(vects),
-            "acts": self.acts(vects),
+            "midpoint": None,
+            "acts": None,
             "num_moves": self.num_moves(vects),
             "rew": self.predicted_reward(vects),
         }
         if not batched:  # unbatch if not batched
-            rets = {k: v.squeeze(0) for k, v in rets.items()}
+            for k, v in rets.items():
+                if v is not None:
+                    rets[k] = v.squeeze(0)
         return rets
 
     def preprocess_frame(self, ob):
