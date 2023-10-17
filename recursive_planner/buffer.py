@@ -50,14 +50,18 @@ class ExperienceDataset(Dataset):
         return len(self.buffer) - 1
 
 
+# queue
 class ExperienceBuffer:
-    def __init__(self):
+    def __init__(self, length=5_000):
         self.buffer: List[Timestep] = []
         self.sma = SMA(100)
+        self.length = length
 
     def add(self, timestep: Timestep):
         self.buffer.append(timestep)
         self.sma.add(timestep.rew)
+        if len(self.buffer) > self.length:
+            self.buffer.pop(0)
 
     def __len__(self) -> int:
         return len(self.buffer)
@@ -90,25 +94,6 @@ class ExperienceBuffer:
             fig.tight_layout()
             plt.savefig("test.png")
         return (frame_1, frame_2), (act, rew)
-
-
-class StateQueue:
-    def __init__(self):
-        self.obs_list = []
-        self.reward_total = 0
-        self.terminated = False
-
-    def __call__(self, env_step):
-        obs, reward, terminated, truncated, info = env_step
-        self.obs_list.append(obs)
-        self.reward_total += reward
-        self.terminated = terminated
-
-    def midpoint(self):
-        return self.obs_list[len(self.obs_list) // 2]
-
-    def final_obs(self):
-        return self.obs_list[-1]
 
 
 class State:
@@ -182,20 +167,13 @@ class State:
         self.update(net)
         before = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         before_str = update_str()
-        # pbar = trange(steps, desc=f"subplan_optim")
-        # for i in pbar:
         for i in range(steps):
             grad = jacobian(encoded_obs, self.goal, self.noise)
             grad = grad.squeeze(0)
             self.noise = self.noise + grad * self.lr
-            # self.update(net)
-            # pbar.set_postfix_str(
-            #     f"poss_this_turn: {self.poss_this_turn.item():.2f} | rew: {self.rew.item():.2f}"
-            # )
         self.update(net)
         after = subplan_optim_loss(net(self.obs, self.goal, self.noise))
         after_str = update_str()
-        # print("BEFORE", before_str, "AFTER", after_str)
         return before, after
 
     # no batch!
@@ -236,8 +214,6 @@ class State:
             self.noise = self.noise + grads[1] * self.lr
         self.update(net)
         after = gen_poss_loss(net(self.obs, self.goal, self.noise))
-        # after_str = update_str()
-        # print("BEFORE", before_str, "AFTER", after_str)
         return before, after
 
     def update(
@@ -310,6 +286,7 @@ class Memory:
             self.gen_poss = torch.tensor(self.gen_poss).float()
         if not isinstance(self.poss_this_turn, torch.Tensor):
             self.poss_this_turn = torch.tensor(self.poss_this_turn).float()
+        # pytorch nn scalar out's have that extra dim
         self.rew = self.rew.unsqueeze(-1)
         self.num_moves = self.num_moves.unsqueeze(-1)
         self.gen_poss = self.gen_poss.unsqueeze(-1)
@@ -352,13 +329,14 @@ class MemoryDataset(Dataset):
 
 
 class MemoryBuffer:
-    def __init__(self) -> None:
+    def __init__(self, length=5_000) -> None:
         self.buffer: List[Memory] = []
-        self.num_moves_norm = torch.nn.BatchNorm1d(1)
-        self.rew_norm = torch.nn.BatchNorm1d(1)
+        self.length = length
 
     def add(self, example: Memory):
         self.buffer.append(example)
+        if len(self.buffer) > self.length:
+            self.buffer.pop(0)
 
     def __len__(self) -> int:
         return len(self.buffer)
@@ -366,67 +344,29 @@ class MemoryBuffer:
     def to_Dataset(self, net: Brain) -> MemoryDataset:
         return MemoryDataset(self.buffer, net)
 
-    def sample_preprocess_and_batch(
-        self, net: Brain, batch_size: int, print: bool = False
-    ):
-        mems = np.random.choice(self.buffer, batch_size)
-        obs = torch.stack([m.obs for m in mems]).float()
-        goal = torch.stack([m.goal for m in mems]).float()
-        if print:
-            fig, axes = plt.subplots(2, batch_size, figsize=(30, 7))
-            for i in range(batch_size):
-                axes[0, i].imshow(obs[i].int())
-                axes[1, i].imshow(goal[i].int())
-
-        if len(goal[0].shape) > 2:
-            goal = net.vision(net.preprocess_frame(goal))
-        noise = torch.ones_like(goal).float()
-        ins = (obs, goal, noise)
-
-        midpoint = torch.stack([m.midpoint for m in mems])
-        if len(midpoint[0].shape) > 2:
-            midpoint = net.vision(net.preprocess_frame(midpoint))
-        acts = torch.stack([m.acts for m in mems]).long()
-        learn_from = [m.learn_from["acts"] for m in mems]
-
-        def scalar_prep(x):
-            return torch.tensor(x).unsqueeze(-1).float()
-
-        rew = scalar_prep([m.rew for m in mems])
-        num_moves = scalar_prep([m.num_moves for m in mems])
-        poss_this_turn = scalar_prep([m.poss_this_turn for m in mems])
-        gen_poss = scalar_prep([m.gen_poss for m in mems])
-        if print:
-            label_dict = {
-                "gen_poss": gen_poss,
-                "poss_this_turn": poss_this_turn,
-                "midpoint": midpoint,
-                "acts": acts,
-                "num_moves": num_moves,
-                "rew": rew,
-            }
-            for ax, i in zip(axes[0], range(batch_size)):
-                infos = [
-                    f"{k}: {v[i].item():.2f}"
-                    for k, v in label_dict.items()
-                    if k != "acts" and k != "midpoint"
-                ]
-                infos = str.join("\n", infos)
-                ax.set_title(infos)
-            fig.tight_layout()
-            plt.savefig("test.png")
-
-        labels = BrainOut(
-            {
-                "gen_poss": gen_poss,
-                "poss_this_turn": poss_this_turn,
-                "midpoint": midpoint,
-                "acts": acts,
-                "num_moves": num_moves,
-                "rew": rew,
-            }
-        )
-        return ins, labels, learn_from
+    #     if print:
+    #         fig, axes = plt.subplots(2, batch_size, figsize=(30, 7))
+    #         for i in range(batch_size):
+    #             axes[0, i].imshow(obs[i].int())
+    #             axes[1, i].imshow(goal[i].int())
+    #         label_dict = {
+    #             "gen_poss": gen_poss,
+    #             "poss_this_turn": poss_this_turn,
+    #             "midpoint": midpoint,
+    #             "acts": acts,
+    #             "num_moves": num_moves,
+    #             "rew": rew,
+    #         }
+    #         for ax, i in zip(axes[0], range(batch_size)):
+    #             infos = [
+    #                 f"{k}: {v[i].item():.2f}"
+    #                 for k, v in label_dict.items()
+    #                 if k != "acts" and k != "midpoint"
+    #             ]
+    #             infos = str.join("\n", infos)
+    #             ax.set_title(infos)
+    #         fig.tight_layout()
+    #         plt.savefig("test.png")
 
 
 class TorchGym:
@@ -438,7 +378,8 @@ class TorchGym:
     def rand_act(self):
         return np.random.randint(0, 6)
 
-    # gymnasium.Env.step(self, action: ActType) → tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]
+    # gymnasium.Env.step(self, action: ActType) → tuple[
+    # ObsType, SupportsFloat, bool, bool, dict[str, Any]]
     def step(self, action):
         action_dict = {
             0: 16,  # noop
@@ -459,7 +400,8 @@ class TorchGym:
         # return self.frame_avg, rew, ret[2], ret[3], ret[4]
         return obs, rew, ret[2], ret[3], ret[4]
 
-    # gymnasium.Env.reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
+    # gymnasium.Env.reset(self, *, seed: int | None = None,
+    # options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
     def reset(self):
         ret = self.gym.reset()
         obs = torch.tensor(ret[0]).float()

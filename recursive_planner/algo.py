@@ -1,24 +1,19 @@
 # Get Goal
 # Recursive bad boy:
 from nets import VisionTrainer, BrainOut, Vision, Brain
-from tqdm import trange
 import numpy as np
 import torch
 from buffer import (
     MemoryBuffer,
     State,
-    StateQueue,
     Memory,
     Timestep,
-    SMA,
     TorchGym,
     ExperienceBuffer,
 )
 import copy
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch import Trainer
-from lightning.pytorch.loggers import TensorBoardLogger
 
 
 class RP:
@@ -51,11 +46,8 @@ class RP:
             print("\nacting")
             self.recursive_actor(state)
             state.obs = self.buffer[-1].obs
-            if count % 5 == 0:
+            if count % 20 == 0:
                 self.train()
-            if count % 300 == 0:
-                self.mem_notes = MemoryBuffer()
-                self.buffer = ExperienceBuffer()
 
     def random_bootstrap(self) -> None:
         _ = self.env.reset()
@@ -67,7 +59,7 @@ class RP:
                 action = self.env.rand_act()
             self.buffer.add(Timestep(*self.env.step(action), action))
 
-        for _ in range(1_000):
+        for _ in range(5_000):
             start = np.random.randint(0, random_play_len - max_sample_length)
             end = start + min(
                 np.random.randint(1, max_sample_length),
@@ -76,7 +68,7 @@ class RP:
                 np.random.randint(1, max_sample_length),
             )
             len = end - start
-            gen_poss = 1 if len < 60 else 0
+            gen_poss = 1 if len < 40 else 0
             poss_this_turn = 1 if len < 10 else 0
             mem = Memory(
                 buffer=self.buffer,
@@ -87,8 +79,8 @@ class RP:
             )
             self.mem_notes.add(mem)
 
-        self.train()
         self.buffer = ExperienceBuffer()
+        self.train()
         self.mem_notes = MemoryBuffer()
 
     def recursive_actor(
@@ -127,6 +119,8 @@ class RP:
         gen_poss = 1 if state.num_moves <= 5 else 0  # is this ever none? rew too?
         if gen_poss == 1:
             print("good plan saved")
+        if poss_this_turn == 1:
+            print("good action saved")
         mem = Memory(
             self.buffer,
             start=start,
@@ -139,7 +133,7 @@ class RP:
         # generator1 = torch.Generator().manual_seed(42)
         dataset = buffer.to_Dataset(net)
         train = torch.utils.data.DataLoader(
-            dataset, shuffle=True, num_workers=8, batch_size=32
+            dataset, shuffle=True, num_workers=2, batch_size=16
         )
         # train, val = torch.utils.data.random_split(
         #     exp_dataset, [0.7, 0.3], generator=generator1

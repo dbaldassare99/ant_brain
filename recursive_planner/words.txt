@@ -1,19 +1,60 @@
-What's wrong 
-So this is the hardest part for sure 
+TODO
+get logging working, figure out whats wrong with scalar losses
+Implement curiosity spec 
+
+
 
 What could be going wrong
-- it learns some set action sequence and then gets stuck with it
-- literally something buggy, not sure why num_moves is so high!!!
-- we're not logging a bunch of important stuff
-   - get the logger up and running
+- Early stopping for the gradient optimizaiton steps so we know it converged.
+- seperate on policy (gen_poss, poss_this_turn), from off policy (everything else...)
+   - help with move collapse
+   - generally feeds world model better
+   - get examples of gen poss and poss this turn from trying plans
+- novelty reward from vision net...
+   - rewards trying new stuff. does make world model kinda on policy, but whatever...
+- do vision and other things updates
+- something bad with loss (gen poss and poss this turn don't look right)
 
-What is really going on...
-- poss this turn is the same as num_moves < 11...
-   - no this is short term bad thinking, poss this turn is poss this turn
+if the exaples are trained s.t. gen poss and such are never given with actions then 
+why are noise updates associated with it
 
-Okay so what the f am I really doing here
 
-- Early stopping for the gradient optimizaiton steps so it's all faster?
+4 nets
+vision_encoder: vis vis -> act, rew
+   - standard vision encoder from curiosity paper
+   - offline
+planner: vis vis -> gen poss, rew, num_moves
+   - trained online.
+   - picks goal by jacobianing
+this_turn_poss: vis vis -> this_turn_poss
+   - trained online.
+   - decides if somethign can be acted on
+   - doesn't need opt, just good if > 0.75 or something...
+actor: vis vis noise -> acts, midpoint, num_moves, rew 
+   - trained offline
+   - exp buffer. we search noise to make it better
+      - less acts, more rew 
+
+4 nets is better because:
+- optimization to know when to act isn't done, it's just a number
+- actor is trained offline, so it's probably way better.
+
+
+alternatively:
+goal make
+can act
+vision
+ppo
+
+alternatively:
+actor: vis, noise -> acts, midpoint, num_moves, rew
+   - take in vis, chances noise to decrease num_moves and increase rew...
+   - does this work??? it's kinda fun if it does...
+   - if we use vision encoder with suprise rew it's kinda dank...
+   - doesn't overcome myopia or anything, but still cool.
+   - basically q learning...
+
+Is there a way for it to avoid the whole gen_poss, poss_this_turn?
 
 TODO
 - how about we do training differntly than I thought...

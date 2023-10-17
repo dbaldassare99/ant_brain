@@ -245,9 +245,13 @@ class Brain(pl.LightningModule):
         def print_scalar(o, l):
             print(torch.stack([o, l], dim=1).squeeze())
 
+        print("gen_poss")
         print_scalar(outputs.gen_poss, labels.gen_poss)
+        print("poss_this_turn")
         print_scalar(outputs.poss_this_turn, labels.poss_this_turn)
+        print("num_moves")
         print_scalar(outputs.num_moves, labels.num_moves)
+        print("rew")
         print_scalar(outputs.rew, labels.rew)
 
         scalar_losses = [
