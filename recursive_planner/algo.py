@@ -146,7 +146,6 @@ class RP:
             max_epochs=3,
             log_every_n_steps=2,
         )
-        # trainer.fit(net, train, val)
 
         trainer.fit(net, train)
         torch.save(net.state_dict(), path)
