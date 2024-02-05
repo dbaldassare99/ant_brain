@@ -56,7 +56,6 @@ if __name__ == "__main__":
         use_restricted_actions=retro.Actions.DISCRETE,
         render_mode="rgb_array",
     )
-    # env = TorchGym(env)
     player = Human(env)
     player.play_human()
     player.notes.save("human_play.pkl")
