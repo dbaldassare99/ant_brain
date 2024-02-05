@@ -25,8 +25,6 @@ class Vision(nn.Module):
             ACTIVATION(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             ACTIVATION(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
-            ACTIVATION(),
             nn.Flatten(),
             nn.Linear(7040, 1024),
             ACTIVATION(),
@@ -82,8 +80,6 @@ class Vects2Midpoint(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(VECT_LEN * 3, 64),
-            ACTIVATION(),
-            nn.Linear(64, 64),
             ACTIVATION(),
             nn.Linear(64, 64),
             ACTIVATION(),
