@@ -400,8 +400,6 @@ class TorchGym:
         # return self.frame_avg, rew, ret[2], ret[3], ret[4]
         return obs, rew, ret[2], ret[3], ret[4]
 
-    # gymnasium.Env.reset(self, *, seed: int | None = None,
-    # options: dict[str, Any] | None = None) → tuple[ObsType, dict[str, Any]]
     def reset(self):
         ret = self.gym.reset()
         obs = torch.tensor(ret[0]).float()
